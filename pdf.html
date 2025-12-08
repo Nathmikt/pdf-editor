@@ -1,0 +1,360 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Minimal PDF Text Adder</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- pdf.js (viewer/renderer) -->
+  <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
+  <!-- pdf-lib (writer) -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+</head>
+
+<body>
+  <div class="toolbar">
+    <input id="file" type="file" accept="application/pdf">
+    <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
+    <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
+    <label>Font:
+      <select id="font">
+        <option value="helvetica">Helvetica</option>
+        <option value="times">Times</option>
+        <option value="courier">Courier</option>
+      </select>
+    </label>
+    <button id="place" disabled>Place</button>
+    <button id="save" disabled>Save PDF</button>
+  </div>
+
+  <div id="hint">Upload a PDF, enter text, click Place, then click a page to drop it.</div>
+  <div id="pages"></div>
+
+  <!-- MUST be type="module" to use JS imports -->
+  <script type="module">
+    import * as pdfjsLib from "https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.mjs";
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.worker.mjs";
+
+    // Make globally accessible if needed
+    window.pdfjsLib = pdfjsLib;
+
+    let originalU8 = null;
+    let originalBytes = null;          // ArrayBuffer of the uploaded PDF
+    let docMeta = [];                  // per-page: {scale, width, height}
+    let marks = [];                    // per-page array of placed text marks
+    let selectedMark = null;           // { el, data, pageIndex }
+    let markIdCounter = 0;
+    let pendingPlacement = null;       // { text, size, font }
+    const fileInput = document.getElementById('file');
+    const textInput = document.getElementById('text');
+    const sizeInput = document.getElementById('size');
+    const fontSelect = document.getElementById('font');
+    const placeBtn = document.getElementById('place');
+    const pagesEl = document.getElementById('pages');
+    const hintEl = document.getElementById('hint');
+    const saveBtn = document.getElementById('save');
+
+    const fontMap = {
+      helvetica: {
+        pdf: () => PDFLib.StandardFonts.Helvetica,
+        css: 'Helvetica, Arial, sans-serif'
+      },
+      times: {
+        pdf: () => PDFLib.StandardFonts.TimesRoman,
+        css: '\'Times New Roman\', Times, serif'
+      },
+      courier: {
+        pdf: () => PDFLib.StandardFonts.Courier,
+        css: '\'Courier New\', Courier, monospace'
+      }
+    };
+
+    function updatePlaceButtonState() {
+      const hasText = !!textInput.value.trim();
+      placeBtn.disabled = !hasText || !!pendingPlacement;
+    }
+
+    function clearSelection() {
+      if (!selectedMark) return;
+      selectedMark.el.classList.remove('selected');
+      selectedMark = null;
+    }
+
+    function selectMark(markEl, markData, pageIndex) {
+      if (selectedMark && selectedMark.el === markEl) return;
+      clearSelection();
+      selectedMark = { el: markEl, data: markData, pageIndex };
+      markEl.classList.add('selected');
+    }
+
+    function deleteMark(pageIndex, markData, markEl) {
+      marks[pageIndex] = marks[pageIndex].filter(m => m !== markData);
+      if (markEl.parentNode) {
+        markEl.parentNode.removeChild(markEl);
+      }
+      if (selectedMark && selectedMark.el === markEl) {
+        selectedMark = null;
+      }
+      const hasMarks = marks.some(arr => arr.length > 0);
+      saveBtn.disabled = !hasMarks;
+    }
+
+    function editMarkText(markEl, markData) {
+      const textSpan = markEl.querySelector('.mark-text');
+      if (!textSpan || markEl.classList.contains('editing')) return;
+
+      const previousText = markData.text;
+      markEl.classList.add('editing');
+      textSpan.contentEditable = 'true';
+      textSpan.focus();
+
+      // Select all text for quick editing
+      const range = document.createRange();
+      range.selectNodeContents(textSpan);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      function finish(save) {
+        textSpan.contentEditable = 'false';
+        markEl.classList.remove('editing');
+        textSpan.removeEventListener('blur', onBlur);
+        textSpan.removeEventListener('keydown', onKey);
+        if (save) {
+          markData.text = textSpan.textContent;
+        } else {
+          textSpan.textContent = previousText;
+        }
+      }
+
+      function onBlur() {
+        finish(true);
+      }
+
+      function onKey(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          textSpan.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          finish(false);
+          textSpan.blur();
+        }
+      }
+
+      textSpan.addEventListener('blur', onBlur);
+      textSpan.addEventListener('keydown', onKey);
+    }
+
+    function attachMarkDragging(markEl, markData, overlay, pageIndex) {
+      function onMouseDown(e) {
+        if (markEl.classList.contains('editing')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = overlay.getBoundingClientRect();
+        const offsetX = (e.clientX - rect.left) - markData.x;
+        const offsetY = (e.clientY - rect.top) - markData.y;
+
+        function onMouseMove(moveEv) {
+          const newX = moveEv.clientX - rect.left - offsetX;
+          const newY = moveEv.clientY - rect.top - offsetY;
+          markData.x = newX;
+          markData.y = newY;
+          markEl.style.left = `${newX}px`;
+          markEl.style.top = `${newY}px`;
+        }
+
+        function onMouseUp(upEv) {
+          upEv.stopPropagation();
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+
+      markEl.addEventListener('mousedown', onMouseDown);
+      markEl.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        selectMark(markEl, markData, pageIndex);
+      });
+      markEl.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        selectMark(markEl, markData, pageIndex);
+        editMarkText(markEl, markData);
+      });
+    }
+
+    function placeMark(pageIndex, overlay, wrapper, x, y, text, size, fontKey) {
+      const fontInfo = fontMap[fontKey] || fontMap.helvetica;
+      const markData = { id: markIdCounter++, x, y, text, size, font: fontKey };
+      marks[pageIndex].push(markData);
+
+      const m = document.createElement('div');
+      m.className = 'mark';
+      m.style.fontSize = size + 'px';
+      m.style.left = x + 'px';
+      m.style.top = y + 'px';
+      m.style.fontFamily = fontInfo.css;
+
+      const textSpan = document.createElement('span');
+      textSpan.className = 'mark-text';
+      textSpan.textContent = text;
+      m.appendChild(textSpan);
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'delete-btn';
+      delBtn.textContent = 'x';
+      delBtn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        deleteMark(pageIndex, markData, m);
+      });
+
+      attachMarkDragging(m, markData, overlay, pageIndex);
+      m.appendChild(delBtn);
+      overlay.appendChild(m);
+      saveBtn.disabled = false;
+      selectMark(m, markData, pageIndex);
+    }
+
+    placeBtn.addEventListener('click', () => {
+      const text = textInput.value.trim();
+      if (!text) return;
+      const size = +sizeInput.value || 14;
+      const font = fontSelect.value;
+      pendingPlacement = { text, size, font };
+      updatePlaceButtonState();
+    });
+
+    textInput.addEventListener('input', updatePlaceButtonState);
+    updatePlaceButtonState();
+
+    // Render uploaded PDF
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const buf = await file.arrayBuffer();
+      const u8 = new Uint8Array(buf);
+
+      // Reset state for new document
+      clearSelection();
+      pendingPlacement = null;
+      markIdCounter = 0;
+      saveBtn.disabled = true;
+      updatePlaceButtonState();
+
+      // Keep a private copy for pdf-lib (never hand this to pdf.js)
+      originalU8 = u8.slice();
+      originalBytes = originalU8.buffer;
+
+      // Hand a separate clone to pdf.js (it can detach this one)
+      const renderU8 = u8.slice();
+      const pdf = await pdfjsLib.getDocument({ data: renderU8 }).promise;
+
+      pagesEl.innerHTML = '';
+      docMeta = []; marks = [];
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const scale = 1.25; // render scale (UI only)
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        // container and overlay for marks
+        const wrapper = document.createElement('div');
+        wrapper.className = 'page';
+        wrapper.appendChild(canvas);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        overlay.style.width = canvas.width + 'px';
+        overlay.style.height = canvas.height + 'px';
+        wrapper.appendChild(overlay);
+
+        // click to place text
+        const pageIndex = p - 1;
+        wrapper.addEventListener('click', (ev) => {
+          if (!originalBytes) return;
+          if (!pendingPlacement) return;
+          if (ev.target.classList.contains('mark')) return;
+          const r = overlay.getBoundingClientRect();
+          const x = ev.clientX - r.left;
+          const y = ev.clientY - r.top;
+
+          const { text, size, font } = pendingPlacement;
+          placeMark(pageIndex, overlay, wrapper, x, y, text, size, font);
+          textInput.value = '';
+          pendingPlacement = null;
+          updatePlaceButtonState();
+        });
+
+        pagesEl.appendChild(wrapper);
+        docMeta.push({ scale, width: viewport.width, height: viewport.height, pdfWidth: page.view[2], pdfHeight: page.view[3] });
+        marks.push([]);
+      }
+
+      hintEl.textContent = `Loaded ${pdf.numPages} page(s). Enter text, click Place, then click a page to drop it.`;
+    });
+
+    // Save: write overlays into the PDF using pdf-lib
+    saveBtn.addEventListener('click', async () => {
+      if (!originalBytes) return;
+
+      const pdfDoc = await PDFLib.PDFDocument.load(originalU8, { updateMetadata: false });
+      const fontCache = {};
+
+      async function getEmbeddedFont(key) {
+        const fontKey = key && fontMap[key] ? key : 'helvetica';
+        if (fontCache[fontKey]) return fontCache[fontKey];
+        const fontName = fontMap[fontKey].pdf();
+        const embedded = await pdfDoc.embedFont(fontName);
+        fontCache[fontKey] = embedded;
+        return embedded;
+      }
+
+      for (let i = 0; i < pdfDoc.getPageCount(); i++) {
+        const page = pdfDoc.getPage(i);
+        const pageSize = page.getSize(); // { width, height } in PDF points
+        const { scale, height } = docMeta[i];
+
+        // Convert screen (canvas) coords to PDF user space:
+        // pdfX = screenX / scale
+        // pdfY = pageHeight - (screenY / scale)
+        for (const m of marks[i]) {
+          const pdfSize = m.size / scale;
+          const pdfX = m.x / scale;
+          const font = await getEmbeddedFont(m.font);
+          const textHeight = font.heightAtSize(pdfSize);
+          // Position baseline so the rendered text sits inside the mark box (CSS uses top-left)
+          const pdfY = pageSize.height - (m.y / scale) - textHeight;
+          page.drawText(m.text, {
+            x: pdfX,
+            y: pdfY,
+            size: pdfSize,
+            font,
+            color: PDFLib.rgb(0, 0, 0)
+          });
+        }
+      }
+
+      const out = await pdfDoc.save({ useObjectStreams: false }); // better compatibility
+      const blob = new Blob([out], { type: 'application/pdf' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'edited.pdf';
+      a.click();
+    });
+  </script>
+</body>
+
+</html>

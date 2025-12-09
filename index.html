@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <title>Minimal PDF Text Adder</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=1.0.0">
   <!-- pdf.js (viewer/renderer) -->
   <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
   <!-- pdf-lib (writer) -->
@@ -16,10 +16,10 @@
     <div class="header-top">
       <img src="pedefeul_logo.png" alt="Pedefeul logo" class="logo">
       <div class="titles">
-        <div class="eyebrow">PEDEFEUL.ro</div>
+        <div id="eyebrow"> PEDEFEUL.ro </div>
         <div class="control-bar">
-          <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
-          <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
+          <label>Text: <input id="text" type="text" placeholder="..."></label>
+          <label>Mărime: <input id="size" type="number" value="14" min="6" max="72"></label>
           <label>Font:
             <select id="font">
               <option value="helvetica">Helvetica</option>
@@ -27,9 +27,9 @@
               <option value="courier">Courier</option>
             </select>
           </label>
-          <button id="place" disabled>Place</button>
-          <button id="save" disabled>Save</button>
-          <button id="reset" disabled>Reset</button>
+          <button id="place" disabled>Plasează</button>
+          <button id="save" disabled>Salvează</button>
+          <button id="reset" disabled>Resetează</button>
         </div>
       </div>
     </div>
@@ -38,8 +38,9 @@
 
   <main class="app-body">
     <section class="upload-section">
-      <p class="upload-instructions">Upload your PDF to start editing.</p>
-      <label class="upload-button" for="file">Upload PDF</label>
+      <h1>Editor gratis de fișiere .pdf</h1>
+      <p class="upload-instructions">Încarcă fișierul tău pentru a putea edita.</p>
+      <label class="upload-button" for="file">Încarcă fișier</label>
       <input id="file" type="file" accept="application/pdf">
     </section>
 
@@ -254,7 +255,6 @@
 
     function enterEditMode() {
       uploadSection.classList.add('hidden');
-      reset.classList.add('visible');
       resetBtn.disabled = false;
     }
 
@@ -274,7 +274,6 @@
       updatePlaceButtonState();
       fileInput.value = '';
       uploadSection.classList.remove('hidden');
-      reset.classList.remove('visible');
       resetBtn.disabled = true;
     }
 

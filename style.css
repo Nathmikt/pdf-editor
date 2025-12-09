@@ -22,7 +22,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif;
-  background: linear-gradient(135deg, #0b1f3f, #103f77, #0d6bbf, #103f77, #0b1f3f);
+  background: linear-gradient(135deg, #ffffff, #fff7f7, #d7f7fc, #b3cbfc, #a2aff1);
   background-size: 400% 400%;
   animation: gradient 15s ease infinite;
   color: var(--text);
@@ -65,10 +65,11 @@ body {
 .header-top {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   flex-wrap: nowrap;
   gap: 12px;
-  width: min(1100px, 100%);
-  margin: 0 auto;
+  width: 100%;
+  padding: 0 40px;
 }
 
 .logo {
@@ -89,7 +90,6 @@ body {
 
 .eyebrow {
   letter-spacing: 0.08em;
-  text-transform: uppercase;
   font-size: 12px;
   color: var(--muted);
   font-weight: 700;
@@ -100,7 +100,6 @@ body {
   flex-wrap: nowrap;
   gap: 12px;
   align-items: center;
-  justify-content: flex-end;
   flex: 1;
   margin-left: auto;
   padding: 6px 8px;
@@ -131,17 +130,6 @@ body {
   margin: 0;
   font-weight: 600;
   color: #1f2937;
-}
-
-.reset-row {
-  display: none;
-  width: min(1100px, 100%);
-  justify-content: center;
-  margin: 4px auto 0;
-}
-
-.reset-row.visible {
-  display: flex;
 }
 
 .hidden {

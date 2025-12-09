@@ -12,23 +12,42 @@
 </head>
 
 <body>
-  <div class="toolbar">
-    <input id="file" type="file" accept="application/pdf">
-    <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
-    <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
-    <label>Font:
-      <select id="font">
-        <option value="helvetica">Helvetica</option>
-        <option value="times">Times</option>
-        <option value="courier">Courier</option>
-      </select>
-    </label>
-    <button id="place" disabled>Place</button>
-    <button id="save" disabled>Save PDF</button>
-  </div>
+  <header class="app-header">
+    <div class="header-top">
+      <img src="pedefeul_logo.png" alt="Pedefeul logo" class="logo">
+      <div class="titles">
+        <div class="eyebrow">PEDEFEUL.ro</div>
+      </div>
+    </div>
+    <div class="header-controls">
+      <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
+      <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
+      <label>Font:
+        <select id="font">
+          <option value="helvetica">Helvetica</option>
+          <option value="times">Times</option>
+          <option value="courier">Courier</option>
+        </select>
+      </label>
+      <button id="place" disabled>Place</button>
+      <button id="save" disabled>Save PDF</button>
+    </div>
 
-  <div id="hint">Upload a PDF, enter text, click Place, then click a page to drop it.</div>
-  <div id="pages"></div>
+  </header>
+
+  <main class="app-body">
+    <section class="upload-section">
+      <p class="upload-instructions">Upload your PDF to start editing.</p>
+      <label class="upload-button" for="file">Upload PDF</label>
+      <input id="file" type="file" accept="application/pdf">
+    </section>
+
+    <div class="reset-row" id="reset-row">
+      <button id="reset" disabled>Reset</button>
+    </div>
+
+    <div id="pages"></div>
+  </main>
 
   <!-- MUST be type="module" to use JS imports -->
   <script type="module">
@@ -53,8 +72,10 @@
     const fontSelect = document.getElementById('font');
     const placeBtn = document.getElementById('place');
     const pagesEl = document.getElementById('pages');
-    const hintEl = document.getElementById('hint');
     const saveBtn = document.getElementById('save');
+    const uploadSection = document.querySelector('.upload-section');
+    const resetRow = document.getElementById('reset-row');
+    const resetBtn = document.getElementById('reset');
 
     const fontMap = {
       helvetica: {
@@ -73,7 +94,8 @@
 
     function updatePlaceButtonState() {
       const hasText = !!textInput.value.trim();
-      placeBtn.disabled = !hasText || !!pendingPlacement;
+      const hasPdf = !!originalBytes;
+      placeBtn.disabled = !hasPdf || !hasText || !!pendingPlacement;
     }
 
     function clearSelection() {
@@ -234,6 +256,32 @@
     textInput.addEventListener('input', updatePlaceButtonState);
     updatePlaceButtonState();
 
+    function enterEditMode() {
+      uploadSection.classList.add('hidden');
+      resetRow.classList.add('visible');
+      resetBtn.disabled = false;
+    }
+
+    function resetApp() {
+      clearSelection();
+      pagesEl.innerHTML = '';
+      originalU8 = null;
+      originalBytes = null;
+      docMeta = [];
+      marks = [];
+      markIdCounter = 0;
+      pendingPlacement = null;
+      textInput.value = '';
+      sizeInput.value = '14';
+      fontSelect.value = 'helvetica';
+      saveBtn.disabled = true;
+      updatePlaceButtonState();
+      fileInput.value = '';
+      uploadSection.classList.remove('hidden');
+      resetRow.classList.remove('visible');
+      resetBtn.disabled = true;
+    }
+
     // Render uploaded PDF
     fileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
@@ -251,6 +299,7 @@
       // Keep a private copy for pdf-lib (never hand this to pdf.js)
       originalU8 = u8.slice();
       originalBytes = originalU8.buffer;
+      updatePlaceButtonState();
 
       // Hand a separate clone to pdf.js (it can detach this one)
       const renderU8 = u8.slice();
@@ -303,8 +352,10 @@
         marks.push([]);
       }
 
-      hintEl.textContent = `Loaded ${pdf.numPages} page(s). Enter text, click Place, then click a page to drop it.`;
+      enterEditMode();
     });
+
+    resetBtn.addEventListener('click', resetApp);
 
     // Save: write overlays into the PDF using pdf-lib
     saveBtn.addEventListener('click', async () => {

@@ -17,20 +17,21 @@
       <img src="pedefeul_logo.png" alt="Pedefeul logo" class="logo">
       <div class="titles">
         <div class="eyebrow">PEDEFEUL.ro</div>
+        <div class="control-bar">
+          <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
+          <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
+          <label>Font:
+            <select id="font">
+              <option value="helvetica">Helvetica</option>
+              <option value="times">Times</option>
+              <option value="courier">Courier</option>
+            </select>
+          </label>
+          <button id="place" disabled>Place</button>
+          <button id="save" disabled>Save</button>
+          <button id="reset" disabled>Reset</button>
+        </div>
       </div>
-    </div>
-    <div class="header-controls">
-      <label>Text: <input id="text" type="text" placeholder="Type text to place"></label>
-      <label>Size: <input id="size" type="number" value="14" min="6" max="72"></label>
-      <label>Font:
-        <select id="font">
-          <option value="helvetica">Helvetica</option>
-          <option value="times">Times</option>
-          <option value="courier">Courier</option>
-        </select>
-      </label>
-      <button id="place" disabled>Place</button>
-      <button id="save" disabled>Save PDF</button>
     </div>
 
   </header>
@@ -41,10 +42,6 @@
       <label class="upload-button" for="file">Upload PDF</label>
       <input id="file" type="file" accept="application/pdf">
     </section>
-
-    <div class="reset-row" id="reset-row">
-      <button id="reset" disabled>Reset</button>
-    </div>
 
     <div id="pages"></div>
   </main>
@@ -74,7 +71,6 @@
     const pagesEl = document.getElementById('pages');
     const saveBtn = document.getElementById('save');
     const uploadSection = document.querySelector('.upload-section');
-    const resetRow = document.getElementById('reset-row');
     const resetBtn = document.getElementById('reset');
 
     const fontMap = {
@@ -258,7 +254,7 @@
 
     function enterEditMode() {
       uploadSection.classList.add('hidden');
-      resetRow.classList.add('visible');
+      reset.classList.add('visible');
       resetBtn.disabled = false;
     }
 
@@ -278,7 +274,7 @@
       updatePlaceButtonState();
       fileInput.value = '';
       uploadSection.classList.remove('hidden');
-      resetRow.classList.remove('visible');
+      reset.classList.remove('visible');
       resetBtn.disabled = true;
     }
 

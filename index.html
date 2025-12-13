@@ -3,10 +3,11 @@
 
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/x-icon" href="pedefeul_logo.png">
   <title>Editor pdf gratis - pedefeul.ro</title>
   <!-- Manually bump css version before each commit/deploy -->
-  <link rel="stylesheet" href="style.css?v=1.1.0">
+  <link rel="stylesheet" href="style.css?v=1.2.0">
   <!-- pdf.js (viewer/renderer) -->
   <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
   <!-- pdf-lib (writer) -->
@@ -204,21 +205,33 @@
     }
 
     function attachMarkDragging(markEl, markData, overlay, pageIndex) {
-      function onMouseDown(e) {
+      function handleStart(startX, startY) {
         if (markEl.classList.contains('editing')) return;
-        e.preventDefault();
-        e.stopPropagation();
         const rect = overlay.getBoundingClientRect();
-        const offsetX = (e.clientX - rect.left) - markData.x;
-        const offsetY = (e.clientY - rect.top) - markData.y;
+        const offsetX = (startX - rect.left) - markData.x;
+        const offsetY = (startY - rect.top) - markData.y;
 
-        function onMouseMove(moveEv) {
-          const newX = moveEv.clientX - rect.left - offsetX;
-          const newY = moveEv.clientY - rect.top - offsetY;
+        function move(currX, currY) {
+          const newX = currX - rect.left - offsetX;
+          const newY = currY - rect.top - offsetY;
           markData.x = newX;
           markData.y = newY;
           markEl.style.left = `${newX}px`;
           markEl.style.top = `${newY}px`;
+        }
+
+        return move;
+      }
+
+      function onMouseDown(e) {
+        const moveFn = handleStart(e.clientX, e.clientY);
+        if (!moveFn) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        function onMouseMove(moveEv) {
+          moveFn(moveEv.clientX, moveEv.clientY);
         }
 
         function onMouseUp(upEv) {
@@ -231,11 +244,46 @@
         document.addEventListener('mouseup', onMouseUp);
       }
 
+      function onTouchStart(e) {
+        if (e.touches.length !== 1) return;
+        const touch = e.touches[0];
+        const moveFn = handleStart(touch.clientX, touch.clientY);
+        if (!moveFn) return;
+
+        e.stopPropagation();
+        // Don't preventDefault here immediately, or we might block scrolling? 
+        // Actually, if we are dragging a mark, we DO want to block scrolling.
+        // But if the user taps to select, we don't want to block everything.
+        // We'll preventDefault in move to be safe, or start. 
+        // For dragging, usually preventDefault on start is best to stop browser behavior.
+        e.preventDefault();
+
+        function onTouchMove(moveEv) {
+          moveEv.preventDefault(); // Stop scrolling
+          const t = moveEv.touches[0];
+          moveFn(t.clientX, t.clientY);
+        }
+
+        function onTouchEnd(endEv) {
+          // Cleanup
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+        }
+
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
+      }
+
       markEl.addEventListener('mousedown', onMouseDown);
+      markEl.addEventListener('touchstart', onTouchStart, { passive: false });
+
       markEl.addEventListener('click', (ev) => {
         ev.stopPropagation();
         selectMark(markEl, markData, pageIndex);
       });
+      // Add touchend for selection if click is unreliable/delayed? 
+      // Ideally click is fine. But let's leave it standard for now.
+
       markEl.addEventListener('dblclick', (ev) => {
         ev.stopPropagation();
         selectMark(markEl, markData, pageIndex);
@@ -376,20 +424,41 @@
         wrapper.appendChild(overlay);
 
         // click to place text
+        // click to place text
         const pageIndex = p - 1;
-        wrapper.addEventListener('click', (ev) => {
+
+        function handlePlacement(clientX, clientY) {
           if (!originalBytes) return;
           if (!pendingPlacement) return;
-          if (ev.target.classList.contains('mark')) return;
+
           const r = overlay.getBoundingClientRect();
-          const x = ev.clientX - r.left;
-          const y = ev.clientY - r.top;
+          const x = clientX - r.left;
+          const y = clientY - r.top;
 
           const { text, size, font, color } = pendingPlacement;
           placeMark(pageIndex, overlay, wrapper, x, y, text, size, font, color);
           textInput.value = '';
           pendingPlacement = null;
           updatePlaceButtonState();
+        }
+
+        wrapper.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
+          handlePlacement(ev.clientX, ev.clientY);
+        });
+
+        // Add touchend for placing on mobile
+        wrapper.addEventListener('touchend', (ev) => {
+          if (!pendingPlacement) return;
+          if (ev.changedTouches.length !== 1) return;
+          const t = ev.changedTouches[0];
+
+          // Avoid hitting a mark
+          const target = document.elementFromPoint(t.clientX, t.clientY);
+          if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
+
+          ev.preventDefault();
+          handlePlacement(t.clientX, t.clientY);
         });
 
         pagesEl.appendChild(wrapper);

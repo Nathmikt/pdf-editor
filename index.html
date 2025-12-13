@@ -6,7 +6,7 @@
   <link rel="icon" type="image/x-icon" href="pedefeul_logo.png">
   <title>Editor pdf gratis - pedefeul.ro</title>
   <!-- Manually bump css version before each commit/deploy -->
-  <link rel="stylesheet" href="style.css?v=1.0.2">
+  <link rel="stylesheet" href="style.css?v=1.1.0">
   <!-- pdf.js (viewer/renderer) -->
   <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
   <!-- pdf-lib (writer) -->
@@ -22,6 +22,7 @@
         <div class="control-bar">
           <label>Text: <input id="text" type="text" placeholder="..."></label>
           <label>Mărime: <input id="size" type="number" value="14" min="6" max="72"></label>
+          <label>Culoare: <input id="color" type="color"></label>
           <label>Font:
             <select id="font">
               <option value="helvetica">Helvetica</option>
@@ -65,10 +66,11 @@
     let marks = [];                    // per-page array of placed text marks
     let selectedMark = null;           // { el, data, pageIndex }
     let markIdCounter = 0;
-    let pendingPlacement = null;       // { text, size, font }
+    let pendingPlacement = null;       // { text, size, font, color }
     const fileInput = document.getElementById('file');
     const textInput = document.getElementById('text');
     const sizeInput = document.getElementById('size');
+    const colorInput = document.getElementById('color');
     const fontSelect = document.getElementById('font');
     const placeBtn = document.getElementById('place');
     const pagesEl = document.getElementById('pages');
@@ -103,11 +105,43 @@
       selectedMark = null;
     }
 
+    function setSelectedMarkSize(sizeValue) {
+      if (!selectedMark) return;
+      const numeric = Number(sizeValue);
+      if (!Number.isFinite(numeric)) return;
+      const min = Number(sizeInput.min) || 0;
+      const max = Number(sizeInput.max) || numeric;
+      const clamped = Math.min(Math.max(numeric, min), max);
+      selectedMark.data.size = clamped;
+      selectedMark.el.style.fontSize = `${clamped}px`;
+      sizeInput.value = clamped;
+    }
+
+    function setSelectedMarkFont(fontKey) {
+      if (!selectedMark) return;
+      const key = fontMap[fontKey] ? fontKey : 'helvetica';
+      selectedMark.data.font = key;
+      selectedMark.el.style.fontFamily = fontMap[key].css;
+      fontSelect.value = key;
+    }
+
+    function setSelectedMarkColor(colorValue) {
+      if (!selectedMark) return;
+      const fallback = '#000000';
+      const val = typeof colorValue === 'string' && colorValue.trim() ? colorValue : fallback;
+      selectedMark.data.color = val;
+      selectedMark.el.style.color = val;
+      colorInput.value = val;
+    }
+
     function selectMark(markEl, markData, pageIndex) {
       if (selectedMark && selectedMark.el === markEl) return;
       clearSelection();
       selectedMark = { el: markEl, data: markData, pageIndex };
       markEl.classList.add('selected');
+      sizeInput.value = markData.size;
+      fontSelect.value = fontMap[markData.font] ? markData.font : 'helvetica';
+      colorInput.value = markData.color || '#000000';
     }
 
     function deleteMark(pageIndex, markData, markEl) {
@@ -209,9 +243,9 @@
       });
     }
 
-    function placeMark(pageIndex, overlay, wrapper, x, y, text, size, fontKey) {
+    function placeMark(pageIndex, overlay, wrapper, x, y, text, size, fontKey, color) {
       const fontInfo = fontMap[fontKey] || fontMap.helvetica;
-      const markData = { id: markIdCounter++, x, y, text, size, font: fontKey };
+      const markData = { id: markIdCounter++, x, y, text, size, font: fontKey, color };
       marks[pageIndex].push(markData);
 
       const m = document.createElement('div');
@@ -219,6 +253,7 @@
       m.style.fontSize = size + 'px';
       m.style.left = x + 'px';
       m.style.top = y + 'px';
+      m.style.color = color;
       m.style.fontFamily = fontInfo.css;
 
       const textSpan = document.createElement('span');
@@ -248,11 +283,24 @@
       if (!text) return;
       const size = +sizeInput.value || 14;
       const font = fontSelect.value;
-      pendingPlacement = { text, size, font };
+      const color = colorInput.value || '#000000';
+      pendingPlacement = { text, size, font, color };
       updatePlaceButtonState();
     });
 
     textInput.addEventListener('input', updatePlaceButtonState);
+    sizeInput.addEventListener('input', () => {
+      if (!selectedMark) return;
+      setSelectedMarkSize(sizeInput.value);
+    });
+    fontSelect.addEventListener('change', () => {
+      if (!selectedMark) return;
+      setSelectedMarkFont(fontSelect.value);
+    });
+    colorInput.addEventListener('input', () => {
+      if (!selectedMark) return;
+      setSelectedMarkColor(colorInput.value);
+    });
     updatePlaceButtonState();
 
     function enterEditMode() {
@@ -337,8 +385,8 @@
           const x = ev.clientX - r.left;
           const y = ev.clientY - r.top;
 
-          const { text, size, font } = pendingPlacement;
-          placeMark(pageIndex, overlay, wrapper, x, y, text, size, font);
+          const { text, size, font, color } = pendingPlacement;
+          placeMark(pageIndex, overlay, wrapper, x, y, text, size, font, color);
           textInput.value = '';
           pendingPlacement = null;
           updatePlaceButtonState();
@@ -360,6 +408,25 @@
 
       const pdfDoc = await PDFLib.PDFDocument.load(originalU8, { updateMetadata: false });
       const fontCache = {};
+
+      function hexToRgb(hex) {
+        if (typeof hex !== 'string') return { r: 0, g: 0, b: 0 };
+        const cleaned = hex.replace('#', '').trim();
+        if (cleaned.length === 3) {
+          const r = parseInt(cleaned[0] + cleaned[0], 16);
+          const g = parseInt(cleaned[1] + cleaned[1], 16);
+          const b = parseInt(cleaned[2] + cleaned[2], 16);
+          return { r, g, b };
+        }
+        if (cleaned.length === 6) {
+          const r = parseInt(cleaned.slice(0, 2), 16);
+          const g = parseInt(cleaned.slice(2, 4), 16);
+          const b = parseInt(cleaned.slice(4, 6), 16);
+          if ([r, g, b].some(v => Number.isNaN(v))) return { r: 0, g: 0, b: 0 };
+          return { r, g, b };
+        }
+        return { r: 0, g: 0, b: 0 };
+      }
 
       async function getEmbeddedFont(key) {
         const fontKey = key && fontMap[key] ? key : 'helvetica';
@@ -385,12 +452,13 @@
           const textHeight = font.heightAtSize(pdfSize);
           // Position baseline so the rendered text sits inside the mark box (CSS uses top-left)
           const pdfY = pageSize.height - (m.y / scale) - textHeight;
+          const { r, g, b } = hexToRgb(m.color || '#000000');
           page.drawText(m.text, {
             x: pdfX,
             y: pdfY,
             size: pdfSize,
             font,
-            color: PDFLib.rgb(0, 0, 0)
+            color: PDFLib.rgb(r / 255, g / 255, b / 255)
           });
         }
       }

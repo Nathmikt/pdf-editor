@@ -60,6 +60,9 @@ body {
   box-shadow: var(--shadow);
   transform: translateY(-24px);
   border: none;
+  position: sticky;
+  top: 24px;
+  z-index: 1000;
 }
 
 .header-top {

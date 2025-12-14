@@ -31,13 +31,13 @@
               <option value="courier">Courier</option>
             </select>
           </label>
-            <button id="place" disabled>Plasează</button>
-            <button id="signature" disabled>Semnătură</button>
-            <button id="save" disabled>Salvează</button>
-            <button id="reset" disabled>Resetează</button>
-          </div>
+          <button id="place" disabled>Plasează</button>
+          <button id="signature" disabled>Semnătură</button>
+          <button id="save" disabled>Salvează</button>
+          <button id="reset" disabled>Resetează</button>
         </div>
       </div>
+    </div>
 
   </header>
 
@@ -58,7 +58,8 @@
         <h2>Desenează semnătura</h2>
         <button type="button" id="signature-cancel" class="icon-btn" aria-label="Închide">&#10005;</button>
       </div>
-      <p class="modal-subtitle">Desenează cu mouse-ul sau cu degetul, apoi apasă Salvează pentru a o așeza în pagină.</p>
+      <p class="modal-subtitle">Desenează cu mouse-ul sau cu degetul, apoi apasă Salvează pentru a o așeza în pagină.
+      </p>
       <div class="signature-canvas-wrapper">
         <canvas id="signature-canvas" width="520" height="200"></canvas>
       </div>
@@ -307,16 +308,30 @@
       function handleStart(startX, startY) {
         if (markEl.classList.contains('editing')) return;
         const rect = overlay.getBoundingClientRect();
-        const offsetX = (startX - rect.left) - markData.x;
-        const offsetY = (startY - rect.top) - markData.y;
+        // Calculate offset as a percentage of the dimension
+        // offsetX = (mouseVal - rectEdge) - (permPos% * rectDim)
+        // actually easier to track offset in pixels for the move calculation
+        const currentLeftPx = markData.x * rect.width;
+        const currentTopPx = markData.y * rect.height;
+
+        const offsetX = (startX - rect.left) - currentLeftPx;
+        const offsetY = (startY - rect.top) - currentTopPx;
 
         function move(currX, currY) {
-          const newX = currX - rect.left - offsetX;
-          const newY = currY - rect.top - offsetY;
-          markData.x = newX;
-          markData.y = newY;
-          markEl.style.left = `${newX}px`;
-          markEl.style.top = `${newY}px`;
+          let newLeftPx = currX - rect.left - offsetX;
+          let newTopPx = currY - rect.top - offsetY;
+
+          // Clamp to boundaries
+          newLeftPx = Math.max(0, Math.min(newLeftPx, rect.width - markEl.offsetWidth));
+          newTopPx = Math.max(0, Math.min(newTopPx, rect.height - markEl.offsetHeight));
+
+          const pctX = newLeftPx / rect.width;
+          const pctY = newTopPx / rect.height;
+
+          markData.x = pctX;
+          markData.y = pctY;
+          markEl.style.left = (pctX * 100) + '%';
+          markEl.style.top = (pctY * 100) + '%';
         }
 
         return move;
@@ -392,29 +407,117 @@
       }
     }
 
-    function placeMark(pageIndex, overlay, x, y, placement) {
+    function attachMarkResizing(markEl, markData, overlay, handle) {
+      function handleStart(startX, startY) {
+        const rect = overlay.getBoundingClientRect();
+        const startWidthPct = markData.w;
+        const startHeightPct = markData.h;
+        const startXPos = startX;
+        const aspectRatio = startWidthPct / startHeightPct;
+
+        function move(currX, currY) {
+          // Calculate delta in pixels, then convert to percentage
+          const deltaX = currX - startXPos;
+          const deltaXPct = deltaX / rect.width;
+
+          let newWidthPct = Math.max(0.05, startWidthPct + deltaXPct);
+          let newHeightPct = newWidthPct / aspectRatio;
+
+          markData.w = newWidthPct;
+          markData.h = newHeightPct;
+
+          markEl.style.width = (newWidthPct * 100) + '%';
+          // auto height for element, but we track h for PDF
+        }
+
+        return move;
+      }
+
+      function onMouseDown(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const moveFn = handleStart(e.clientX, e.clientY);
+
+        function onMouseMove(moveEv) {
+          moveFn(moveEv.clientX, moveEv.clientY);
+        }
+
+        function onMouseUp(upEv) {
+          upEv.stopPropagation();
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+
+      function onTouchStart(e) {
+        if (e.touches.length !== 1) return;
+        e.stopPropagation();
+        e.preventDefault();
+
+        const t = e.touches[0];
+        const moveFn = handleStart(t.clientX, t.clientY);
+
+        function onTouchMove(moveEv) {
+          moveEv.preventDefault();
+          const img = moveEv.touches[0];
+          moveFn(img.clientX, img.clientY);
+        }
+
+        function onTouchEnd(endEv) {
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+        }
+
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
+      }
+
+      handle.addEventListener('mousedown', onMouseDown);
+      handle.addEventListener('touchstart', onTouchStart, { passive: false });
+    }
+
+    function placeMark(pageIndex, overlay, xPx, yPx, placement) {
       if (!placement) return;
 
+      const rect = overlay.getBoundingClientRect();
+      const xPct = xPx / rect.width;
+      const yPct = yPx / rect.height;
+
       if (placement.type === 'signature') {
-        const width = placement.width;
-        const height = placement.height;
+        let widthPct, heightPct;
+
+        if (placement.isRelative) {
+          // New logic: simpler, consistent size
+          widthPct = placement.targetPct || 0.25;
+          heightPct = widthPct / placement.aspectRatio;
+        } else {
+          // Fallback or legacy logic
+          widthPct = placement.width / rect.width;
+          heightPct = placement.height / rect.height;
+        }
+
         const markData = {
           id: markIdCounter++,
           type: 'signature',
-          x,
-          y,
+          x: xPct,
+          y: yPct,
           src: placement.src,
-          width,
-          height
+          w: widthPct,
+          h: heightPct
         };
         marks[pageIndex].push(markData);
 
         const m = document.createElement('div');
         m.className = 'mark signature-mark';
-        m.style.left = x + 'px';
-        m.style.top = y + 'px';
-        m.style.width = width + 'px';
-        m.style.height = height + 'px';
+        m.style.left = (xPct * 100) + '%';
+        m.style.top = (yPct * 100) + '%';
+        m.style.width = (widthPct * 100) + '%';
+        // We use auto height for the DOM element to keep aspect ratio, 
+        // as the img will fill width.
+        m.style.height = 'auto';
 
         const img = document.createElement('img');
         img.src = placement.src;
@@ -422,6 +525,10 @@
         img.style.width = '100%';
         img.style.height = 'auto';
         m.appendChild(img);
+
+        const handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        m.appendChild(handle);
 
         const delBtn = document.createElement('button');
         delBtn.type = 'button';
@@ -434,6 +541,7 @@
         });
 
         attachMarkDragging(m, markData, overlay, pageIndex);
+        attachMarkResizing(m, markData, overlay, handle);
         m.appendChild(delBtn);
         overlay.appendChild(m);
         saveBtn.disabled = false;
@@ -445,8 +553,8 @@
       const markData = {
         id: markIdCounter++,
         type: 'text',
-        x,
-        y,
+        x: xPct,
+        y: yPct,
         text: placement.text,
         size: placement.size,
         font: placement.font,
@@ -456,9 +564,9 @@
 
       const m = document.createElement('div');
       m.className = 'mark';
-      m.style.fontSize = placement.size + 'px';
-      m.style.left = x + 'px';
-      m.style.top = y + 'px';
+      m.style.fontSize = placement.size + 'px'; // Font size remains absolute px for UI availability
+      m.style.left = (xPct * 100) + '%';
+      m.style.top = (yPct * 100) + '%';
       m.style.color = placement.color;
       m.style.fontFamily = fontInfo.css;
 
@@ -525,17 +633,34 @@
 
     signatureSaveBtn.addEventListener('click', () => {
       if (!signatureHasInk) return;
+
+      // Default to 25% of the page width (better for mobile uniformity)
       const baseWidth = signatureCanvasSize.width || signatureCanvas.width || 520;
       const baseHeight = signatureCanvasSize.height || signatureCanvas.height || 200;
-      const targetWidth = Math.min(220, baseWidth);
-      const scale = targetWidth / baseWidth;
-      const targetHeight = baseHeight * scale;
+
+      // Instead of fixed pixels, we define a target percentage width
+      // But we need the ASPECT RATIO of the signature
+      const aspectRatio = baseWidth / baseHeight;
+
+      // We'll calculate the actual width/height percentages in placeMark
+      // Here we just pass the src and aspect info, OR we simulate a width.
+      // Actually, placeMark expects 'placement.width' to be a pixel value in the current logic.
+      // But we modified placeMark logic? No, placeMark takes `placement.width` and div by rect.width.
+
+      // Let's pass a "pseudo-pixel" width that forces the percentage calculation 
+      // in placeMark to result in exactly 25%?
+      // No, let's just use the current viewer width reference if possible. 
+      // But we aren't in a page context here.
+
+      // Better: Store aspect ratio in pendingPlacement
       pendingPlacement = {
         type: 'signature',
         src: signatureCanvas.toDataURL('image/png'),
-        width: targetWidth,
-        height: targetHeight
+        isRelative: true, // Signal to use relative sizing
+        targetPct: 0.25,  // 25% width
+        aspectRatio: aspectRatio
       };
+
       closeSignatureModal();
       clearSelection();
       updatePlaceButtonState();
@@ -755,28 +880,37 @@
       for (let i = 0; i < pdfDoc.getPageCount(); i++) {
         const page = pdfDoc.getPage(i);
         const pageSize = page.getSize(); // { width, height } in PDF points
-        const { scale, height } = docMeta[i];
+        const { scale } = docMeta[i];
 
         // Convert screen (canvas) coords to PDF user space:
-        // pdfX = screenX / scale
-        // pdfY = pageHeight - (screenY / scale)
+        // mark.x is 0..1 percentage
         for (const m of marks[i]) {
           if (m.type === 'signature') {
             const img = await getEmbeddedImage(m.src);
-            const pdfW = m.width / scale;
-            const pdfH = m.height / scale;
-            const pdfX = m.x / scale;
-            const pdfY = pageSize.height - (m.y / scale) - pdfH;
+            // w is percentage of width
+            const pdfW = m.w * pageSize.width;
+            // h is percentage of height ?? No, h was percentage of canvas height.
+            // pageSize.height might be different aspect ratio if canvas layout was different?
+            // Usually pdf.js canvas matches aspect ratio.
+            const pdfH = m.h * pageSize.height;
+
+            const pdfX = m.x * pageSize.width;
+            // PDF Y is from bottom. m.y is from top (0..1).
+            const pdfY = pageSize.height - (m.y * pageSize.height) - pdfH;
+
             page.drawImage(img, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
             continue;
           }
 
           const pdfSize = m.size / scale;
-          const pdfX = m.x / scale;
           const font = await getEmbeddedFont(m.font);
           const textHeight = font.heightAtSize(pdfSize);
-          // Position baseline so the rendered text sits inside the mark box (CSS uses top-left)
-          const pdfY = pageSize.height - (m.y / scale) - textHeight;
+
+          const pdfX = m.x * pageSize.width;
+          // For text, CSS top is ~ cap height top. PDF y is baseline.
+          // Adjusting by textHeight roughly aligns them.
+          const pdfY = pageSize.height - (m.y * pageSize.height) - textHeight;
+
           const { r, g, b } = hexToRgb(m.color || '#000000');
           page.drawText(m.text, {
             x: pdfX,

@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="pedefeul_logo.png">
   <title>Editor pdf gratis - pedefeul.ro</title>
   <!-- Manually bump css version before each commit/deploy -->
-  <link rel="stylesheet" href="style.css?v=1.2.0">
+  <link rel="stylesheet" href="style.css?v=1.3.0">
   <!-- pdf.js (viewer/renderer) -->
   <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
   <!-- pdf-lib (writer) -->
@@ -17,9 +17,9 @@
 <body>
   <header class="app-header">
     <div class="header-top">
-      <img src="pedefeul_logo.png" alt="Pedefeul logo" class="logo">
+      <img src="pedefeul_logo2.png" alt="Pedefeul logo" class="logo">
       <div class="titles">
-        <div id="eyebrow"> PEDEFEUL.ro </div>
+        <div id="eyebrow"> PEDEFEUL.ro</div>
         <div class="control-bar">
           <label>Text: <input id="text" type="text" placeholder="..."></label>
           <label>Mărime: <input id="size" type="number" value="14" min="6" max="72"></label>
@@ -31,12 +31,13 @@
               <option value="courier">Courier</option>
             </select>
           </label>
-          <button id="place" disabled>Plasează</button>
-          <button id="save" disabled>Salvează</button>
-          <button id="reset" disabled>Resetează</button>
+            <button id="place" disabled>Plasează</button>
+            <button id="signature" disabled>Semnătură</button>
+            <button id="save" disabled>Salvează</button>
+            <button id="reset" disabled>Resetează</button>
+          </div>
         </div>
       </div>
-    </div>
 
   </header>
 
@@ -51,6 +52,23 @@
     <div id="pages"></div>
   </main>
 
+  <div id="signature-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Desenează semnătura</h2>
+        <button type="button" id="signature-cancel" class="icon-btn" aria-label="Închide">&#10005;</button>
+      </div>
+      <p class="modal-subtitle">Desenează cu mouse-ul sau cu degetul, apoi apasă Salvează pentru a o așeza în pagină.</p>
+      <div class="signature-canvas-wrapper">
+        <canvas id="signature-canvas" width="520" height="200"></canvas>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="signature-clear">Șterge</button>
+        <button type="button" id="signature-save">Salvează</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MUST be type="module" to use JS imports -->
   <script type="module">
     import * as pdfjsLib from "https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.mjs";
@@ -64,20 +82,29 @@
     let originalU8 = null;
     let originalBytes = null;          // ArrayBuffer of the uploaded PDF
     let docMeta = [];                  // per-page: {scale, width, height}
-    let marks = [];                    // per-page array of placed text marks
+    let marks = [];                    // per-page array of placed marks (text/signature)
     let selectedMark = null;           // { el, data, pageIndex }
     let markIdCounter = 0;
-    let pendingPlacement = null;       // { text, size, font, color }
+    let pendingPlacement = null;       // { type, ... }
     const fileInput = document.getElementById('file');
     const textInput = document.getElementById('text');
     const sizeInput = document.getElementById('size');
     const colorInput = document.getElementById('color');
     const fontSelect = document.getElementById('font');
     const placeBtn = document.getElementById('place');
+    const signatureBtn = document.getElementById('signature');
     const pagesEl = document.getElementById('pages');
     const saveBtn = document.getElementById('save');
     const uploadSection = document.querySelector('.upload-section');
     const resetBtn = document.getElementById('reset');
+    const signatureModal = document.getElementById('signature-modal');
+    const signatureCanvas = document.getElementById('signature-canvas');
+    const signatureClearBtn = document.getElementById('signature-clear');
+    const signatureSaveBtn = document.getElementById('signature-save');
+    const signatureCancelBtn = document.getElementById('signature-cancel');
+    const signatureCtx = signatureCanvas.getContext('2d');
+    let signatureHasInk = false;
+    let signatureCanvasSize = { width: 520, height: 200 };
 
     const fontMap = {
       helvetica: {
@@ -98,6 +125,75 @@
       const hasText = !!textInput.value.trim();
       const hasPdf = !!originalBytes;
       placeBtn.disabled = !hasPdf || !hasText || !!pendingPlacement;
+      updateSignatureButtonState();
+    }
+
+    function updateSignatureButtonState() {
+      signatureBtn.disabled = !originalBytes || !!pendingPlacement;
+    }
+
+    function updateSignatureActionState() {
+      signatureSaveBtn.disabled = !signatureHasInk;
+      signatureClearBtn.disabled = !signatureHasInk;
+    }
+
+    function resizeSignatureCanvas() {
+      const rect = signatureCanvas.getBoundingClientRect();
+      const width = rect.width || signatureCanvasSize.width;
+      const height = rect.height || signatureCanvasSize.height;
+      signatureCanvasSize = { width, height };
+      signatureCanvas.width = width;
+      signatureCanvas.height = height;
+      signatureCtx.lineWidth = 2;
+      signatureCtx.lineCap = 'round';
+      signatureCtx.lineJoin = 'round';
+      signatureCtx.strokeStyle = '#000000';
+      signatureCtx.clearRect(0, 0, width, height);
+      signatureHasInk = false;
+      updateSignatureActionState();
+    }
+
+    function clearSignatureCanvas() {
+      signatureCtx.clearRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+      signatureHasInk = false;
+      updateSignatureActionState();
+    }
+
+    function openSignatureModal() {
+      signatureModal.classList.remove('hidden');
+      requestAnimationFrame(resizeSignatureCanvas);
+    }
+
+    function closeSignatureModal() {
+      signatureModal.classList.add('hidden');
+    }
+
+    function getSignaturePoint(clientX, clientY) {
+      const rect = signatureCanvas.getBoundingClientRect();
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    let drawingSignature = false;
+
+    function startSignatureStroke(x, y) {
+      drawingSignature = true;
+      signatureCtx.beginPath();
+      signatureCtx.moveTo(x, y);
+      signatureHasInk = true;
+      updateSignatureActionState();
+    }
+
+    function continueSignatureStroke(x, y) {
+      if (!drawingSignature) return;
+      signatureCtx.lineTo(x, y);
+      signatureCtx.stroke();
+    }
+
+    function endSignatureStroke() {
+      drawingSignature = false;
     }
 
     function clearSelection() {
@@ -107,7 +203,7 @@
     }
 
     function setSelectedMarkSize(sizeValue) {
-      if (!selectedMark) return;
+      if (!selectedMark || selectedMark.data.type !== 'text') return;
       const numeric = Number(sizeValue);
       if (!Number.isFinite(numeric)) return;
       const min = Number(sizeInput.min) || 0;
@@ -119,7 +215,7 @@
     }
 
     function setSelectedMarkFont(fontKey) {
-      if (!selectedMark) return;
+      if (!selectedMark || selectedMark.data.type !== 'text') return;
       const key = fontMap[fontKey] ? fontKey : 'helvetica';
       selectedMark.data.font = key;
       selectedMark.el.style.fontFamily = fontMap[key].css;
@@ -127,7 +223,7 @@
     }
 
     function setSelectedMarkColor(colorValue) {
-      if (!selectedMark) return;
+      if (!selectedMark || selectedMark.data.type !== 'text') return;
       const fallback = '#000000';
       const val = typeof colorValue === 'string' && colorValue.trim() ? colorValue : fallback;
       selectedMark.data.color = val;
@@ -140,9 +236,11 @@
       clearSelection();
       selectedMark = { el: markEl, data: markData, pageIndex };
       markEl.classList.add('selected');
-      sizeInput.value = markData.size;
-      fontSelect.value = fontMap[markData.font] ? markData.font : 'helvetica';
-      colorInput.value = markData.color || '#000000';
+      if (markData.type === 'text') {
+        sizeInput.value = markData.size;
+        fontSelect.value = fontMap[markData.font] ? markData.font : 'helvetica';
+        colorInput.value = markData.color || '#000000';
+      }
     }
 
     function deleteMark(pageIndex, markData, markEl) {
@@ -158,6 +256,7 @@
     }
 
     function editMarkText(markEl, markData) {
+      if (markData.type !== 'text') return;
       const textSpan = markEl.querySelector('.mark-text');
       if (!textSpan || markEl.classList.contains('editing')) return;
 
@@ -284,29 +383,88 @@
       // Add touchend for selection if click is unreliable/delayed? 
       // Ideally click is fine. But let's leave it standard for now.
 
-      markEl.addEventListener('dblclick', (ev) => {
-        ev.stopPropagation();
-        selectMark(markEl, markData, pageIndex);
-        editMarkText(markEl, markData);
-      });
+      if (markData.type === 'text') {
+        markEl.addEventListener('dblclick', (ev) => {
+          ev.stopPropagation();
+          selectMark(markEl, markData, pageIndex);
+          editMarkText(markEl, markData);
+        });
+      }
     }
 
-    function placeMark(pageIndex, overlay, wrapper, x, y, text, size, fontKey, color) {
-      const fontInfo = fontMap[fontKey] || fontMap.helvetica;
-      const markData = { id: markIdCounter++, x, y, text, size, font: fontKey, color };
+    function placeMark(pageIndex, overlay, x, y, placement) {
+      if (!placement) return;
+
+      if (placement.type === 'signature') {
+        const width = placement.width;
+        const height = placement.height;
+        const markData = {
+          id: markIdCounter++,
+          type: 'signature',
+          x,
+          y,
+          src: placement.src,
+          width,
+          height
+        };
+        marks[pageIndex].push(markData);
+
+        const m = document.createElement('div');
+        m.className = 'mark signature-mark';
+        m.style.left = x + 'px';
+        m.style.top = y + 'px';
+        m.style.width = width + 'px';
+        m.style.height = height + 'px';
+
+        const img = document.createElement('img');
+        img.src = placement.src;
+        img.alt = 'Semnătură';
+        img.style.width = '100%';
+        img.style.height = 'auto';
+        m.appendChild(img);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete-btn';
+        delBtn.textContent = 'x';
+        delBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          deleteMark(pageIndex, markData, m);
+        });
+
+        attachMarkDragging(m, markData, overlay, pageIndex);
+        m.appendChild(delBtn);
+        overlay.appendChild(m);
+        saveBtn.disabled = false;
+        selectMark(m, markData, pageIndex);
+        return;
+      }
+
+      const fontInfo = fontMap[placement.font] || fontMap.helvetica;
+      const markData = {
+        id: markIdCounter++,
+        type: 'text',
+        x,
+        y,
+        text: placement.text,
+        size: placement.size,
+        font: placement.font,
+        color: placement.color
+      };
       marks[pageIndex].push(markData);
 
       const m = document.createElement('div');
       m.className = 'mark';
-      m.style.fontSize = size + 'px';
+      m.style.fontSize = placement.size + 'px';
       m.style.left = x + 'px';
       m.style.top = y + 'px';
-      m.style.color = color;
+      m.style.color = placement.color;
       m.style.fontFamily = fontInfo.css;
 
       const textSpan = document.createElement('span');
       textSpan.className = 'mark-text';
-      textSpan.textContent = text;
+      textSpan.textContent = placement.text;
       m.appendChild(textSpan);
 
       const delBtn = document.createElement('button');
@@ -332,7 +490,7 @@
       const size = +sizeInput.value || 14;
       const font = fontSelect.value;
       const color = colorInput.value || '#000000';
-      pendingPlacement = { text, size, font, color };
+      pendingPlacement = { type: 'text', text, size, font, color };
       updatePlaceButtonState();
     });
 
@@ -349,6 +507,79 @@
       if (!selectedMark) return;
       setSelectedMarkColor(colorInput.value);
     });
+
+    signatureBtn.addEventListener('click', () => {
+      pendingPlacement = null;
+      openSignatureModal();
+      updatePlaceButtonState();
+    });
+
+    signatureCancelBtn.addEventListener('click', () => {
+      closeSignatureModal();
+      clearSignatureCanvas();
+    });
+
+    signatureClearBtn.addEventListener('click', () => {
+      clearSignatureCanvas();
+    });
+
+    signatureSaveBtn.addEventListener('click', () => {
+      if (!signatureHasInk) return;
+      const baseWidth = signatureCanvasSize.width || signatureCanvas.width || 520;
+      const baseHeight = signatureCanvasSize.height || signatureCanvas.height || 200;
+      const targetWidth = Math.min(220, baseWidth);
+      const scale = targetWidth / baseWidth;
+      const targetHeight = baseHeight * scale;
+      pendingPlacement = {
+        type: 'signature',
+        src: signatureCanvas.toDataURL('image/png'),
+        width: targetWidth,
+        height: targetHeight
+      };
+      closeSignatureModal();
+      clearSelection();
+      updatePlaceButtonState();
+    });
+
+    signatureCanvas.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const { x, y } = getSignaturePoint(e.clientX, e.clientY);
+      startSignatureStroke(x, y);
+    });
+
+    signatureCanvas.addEventListener('mousemove', (e) => {
+      if (!drawingSignature) return;
+      e.preventDefault();
+      const { x, y } = getSignaturePoint(e.clientX, e.clientY);
+      continueSignatureStroke(x, y);
+    });
+
+    ['mouseup', 'mouseleave'].forEach(evt => {
+      signatureCanvas.addEventListener(evt, () => {
+        if (drawingSignature) endSignatureStroke();
+      });
+    });
+
+    signatureCanvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const { x, y } = getSignaturePoint(t.clientX, t.clientY);
+      e.preventDefault();
+      startSignatureStroke(x, y);
+    }, { passive: false });
+
+    signatureCanvas.addEventListener('touchmove', (e) => {
+      if (!drawingSignature || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const { x, y } = getSignaturePoint(t.clientX, t.clientY);
+      e.preventDefault();
+      continueSignatureStroke(x, y);
+    }, { passive: false });
+
+    ['touchend', 'touchcancel'].forEach(evt => {
+      signatureCanvas.addEventListener(evt, () => endSignatureStroke());
+    });
+    updateSignatureActionState();
     updatePlaceButtonState();
 
     function enterEditMode() {
@@ -369,6 +600,11 @@
       sizeInput.value = '14';
       fontSelect.value = 'helvetica';
       saveBtn.disabled = true;
+      closeSignatureModal();
+      clearSignatureCanvas();
+      signatureHasInk = false;
+      signatureCanvasSize = { width: 520, height: 200 };
+      updateSignatureActionState();
       updatePlaceButtonState();
       fileInput.value = '';
       uploadSection.classList.remove('hidden');
@@ -435,9 +671,11 @@
           const x = clientX - r.left;
           const y = clientY - r.top;
 
-          const { text, size, font, color } = pendingPlacement;
-          placeMark(pageIndex, overlay, wrapper, x, y, text, size, font, color);
-          textInput.value = '';
+          const placement = pendingPlacement;
+          placeMark(pageIndex, overlay, x, y, placement);
+          if (placement.type === 'text') {
+            textInput.value = '';
+          }
           pendingPlacement = null;
           updatePlaceButtonState();
         }
@@ -477,6 +715,7 @@
 
       const pdfDoc = await PDFLib.PDFDocument.load(originalU8, { updateMetadata: false });
       const fontCache = {};
+      const imageCache = {};
 
       function hexToRgb(hex) {
         if (typeof hex !== 'string') return { r: 0, g: 0, b: 0 };
@@ -506,6 +745,13 @@
         return embedded;
       }
 
+      async function getEmbeddedImage(src) {
+        if (imageCache[src]) return imageCache[src];
+        const img = await pdfDoc.embedPng(src);
+        imageCache[src] = img;
+        return img;
+      }
+
       for (let i = 0; i < pdfDoc.getPageCount(); i++) {
         const page = pdfDoc.getPage(i);
         const pageSize = page.getSize(); // { width, height } in PDF points
@@ -515,6 +761,16 @@
         // pdfX = screenX / scale
         // pdfY = pageHeight - (screenY / scale)
         for (const m of marks[i]) {
+          if (m.type === 'signature') {
+            const img = await getEmbeddedImage(m.src);
+            const pdfW = m.width / scale;
+            const pdfH = m.height / scale;
+            const pdfX = m.x / scale;
+            const pdfY = pageSize.height - (m.y / scale) - pdfH;
+            page.drawImage(img, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+            continue;
+          }
+
           const pdfSize = m.size / scale;
           const pdfX = m.x / scale;
           const font = await getEmbeddedFont(m.font);

@@ -7,9 +7,9 @@
   <link rel="icon" type="image/x-icon" href="pedefeul_logo.png">
   <title>Editor pdf gratis - pedefeul.ro</title>
   <!-- Manually bump css version before each commit/deploy -->
-  <link rel="stylesheet" href="style.css?v=1.3.0">
+  <link rel="stylesheet" href="style.css?v=1.4.0">
   <!-- pdf.js (viewer/renderer) -->
-  <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js"></script>
+  <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js?module"></script>
   <!-- pdf-lib (writer) -->
   <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 </head>
@@ -32,6 +32,7 @@
             </select>
           </label>
           <button id="place" disabled>Plasează</button>
+          <button id="correct" disabled>Corectură</button>
           <button id="signature" disabled>Semnătură</button>
           <button id="save" disabled>Salvează</button>
           <button id="reset" disabled>Resetează</button>
@@ -98,6 +99,7 @@
     const saveBtn = document.getElementById('save');
     const uploadSection = document.querySelector('.upload-section');
     const resetBtn = document.getElementById('reset');
+    const correctBtn = document.getElementById('correct');
     const signatureModal = document.getElementById('signature-modal');
     const signatureCanvas = document.getElementById('signature-canvas');
     const signatureClearBtn = document.getElementById('signature-clear');
@@ -127,10 +129,15 @@
       const hasPdf = !!originalBytes;
       placeBtn.disabled = !hasPdf || !hasText || !!pendingPlacement;
       updateSignatureButtonState();
+      updateCorrectButtonState();
     }
 
     function updateSignatureButtonState() {
       signatureBtn.disabled = !originalBytes || !!pendingPlacement;
+    }
+
+    function updateCorrectButtonState() {
+      correctBtn.disabled = !originalBytes || !!pendingPlacement;
     }
 
     function updateSignatureActionState() {
@@ -224,11 +231,15 @@
     }
 
     function setSelectedMarkColor(colorValue) {
-      if (!selectedMark || selectedMark.data.type !== 'text') return;
+      if (!selectedMark || (selectedMark.data.type !== 'text' && selectedMark.data.type !== 'block')) return;
       const fallback = '#000000';
       const val = typeof colorValue === 'string' && colorValue.trim() ? colorValue : fallback;
       selectedMark.data.color = val;
-      selectedMark.el.style.color = val;
+      if (selectedMark.data.type === 'text') {
+        selectedMark.el.style.color = val;
+      } else {
+        selectedMark.el.style.backgroundColor = val;
+      }
       colorInput.value = val;
     }
 
@@ -241,6 +252,9 @@
         sizeInput.value = markData.size;
         fontSelect.value = fontMap[markData.font] ? markData.font : 'helvetica';
         colorInput.value = markData.color || '#000000';
+      }
+      if (markData.type === 'block') {
+        colorInput.value = markData.color || '#ffffff';
       }
     }
 
@@ -479,6 +493,79 @@
       handle.addEventListener('touchstart', onTouchStart, { passive: false });
     }
 
+    function attachMarkResizingFree(markEl, markData, overlay, handle) {
+      function handleStart(startX, startY) {
+        const rect = overlay.getBoundingClientRect();
+        const startWidthPct = markData.w;
+        const startHeightPct = markData.h;
+        const startXPos = startX;
+        const startYPos = startY;
+
+        function move(currX, currY) {
+          const deltaX = currX - startXPos;
+          const deltaY = currY - startYPos;
+          const deltaXPct = deltaX / rect.width;
+          const deltaYPct = deltaY / rect.height;
+
+          const newWidthPct = Math.max(0.02, startWidthPct + deltaXPct);
+          const newHeightPct = Math.max(0.02, startHeightPct + deltaYPct);
+
+          markData.w = newWidthPct;
+          markData.h = newHeightPct;
+
+          markEl.style.width = (newWidthPct * 100) + '%';
+          markEl.style.height = (newHeightPct * 100) + '%';
+        }
+
+        return move;
+      }
+
+      function onMouseDown(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        const moveFn = handleStart(e.clientX, e.clientY);
+
+        function onMouseMove(moveEv) {
+          moveFn(moveEv.clientX, moveEv.clientY);
+        }
+
+        function onMouseUp(upEv) {
+          upEv.stopPropagation();
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      }
+
+      function onTouchStart(e) {
+        if (e.touches.length !== 1) return;
+        e.stopPropagation();
+        e.preventDefault();
+
+        const t = e.touches[0];
+        const moveFn = handleStart(t.clientX, t.clientY);
+
+        function onTouchMove(moveEv) {
+          moveEv.preventDefault();
+          const img = moveEv.touches[0];
+          moveFn(img.clientX, img.clientY);
+        }
+
+        function onTouchEnd(endEv) {
+          document.removeEventListener('touchmove', onTouchMove);
+          document.removeEventListener('touchend', onTouchEnd);
+        }
+
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        document.addEventListener('touchend', onTouchEnd);
+      }
+
+      handle.addEventListener('mousedown', onMouseDown);
+      handle.addEventListener('touchstart', onTouchStart, { passive: false });
+    }
+
     function placeMark(pageIndex, overlay, xPx, yPx, placement) {
       if (!placement) return;
 
@@ -549,6 +636,54 @@
         return;
       }
 
+      if (placement.type === 'block') {
+        const baseWidth = placement.width || 160;
+        const baseHeight = placement.height || 48;
+        const widthPct = baseWidth / rect.width;
+        const heightPct = baseHeight / rect.height;
+
+        const markData = {
+          id: markIdCounter++,
+          type: 'block',
+          x: xPct,
+          y: yPct,
+          color: placement.color || '#ffffff',
+          w: widthPct,
+          h: heightPct
+        };
+        marks[pageIndex].push(markData);
+
+        const m = document.createElement('div');
+        m.className = 'mark block-mark';
+        m.style.left = (xPct * 100) + '%';
+        m.style.top = (yPct * 100) + '%';
+        m.style.width = (widthPct * 100) + '%';
+        m.style.height = (heightPct * 100) + '%';
+        m.style.backgroundColor = markData.color;
+
+        const handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        m.appendChild(handle);
+
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'delete-btn';
+        delBtn.textContent = 'x';
+        delBtn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          deleteMark(pageIndex, markData, m);
+        });
+
+        attachMarkDragging(m, markData, overlay, pageIndex);
+        attachMarkResizingFree(m, markData, overlay, handle);
+        m.appendChild(delBtn);
+        overlay.appendChild(m);
+        saveBtn.disabled = false;
+        selectMark(m, markData, pageIndex);
+        return;
+      }
+
       const fontInfo = fontMap[placement.font] || fontMap.helvetica;
       const markData = {
         id: markIdCounter++,
@@ -599,6 +734,12 @@
       const font = fontSelect.value;
       const color = colorInput.value || '#000000';
       pendingPlacement = { type: 'text', text, size, font, color };
+      updatePlaceButtonState();
+    });
+
+    correctBtn.addEventListener('click', () => {
+      const color = colorInput.value || '#ffffff';
+      pendingPlacement = { type: 'block', color, width: 160, height: 48 };
       updatePlaceButtonState();
     });
 
@@ -899,6 +1040,22 @@
             const pdfY = pageSize.height - (m.y * pageSize.height) - pdfH;
 
             page.drawImage(img, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+            continue;
+          }
+
+          if (m.type === 'block') {
+            const pdfW = m.w * pageSize.width;
+            const pdfH = m.h * pageSize.height;
+            const pdfX = m.x * pageSize.width;
+            const pdfY = pageSize.height - (m.y * pageSize.height) - pdfH;
+            const { r, g, b } = hexToRgb(m.color || '#ffffff');
+            page.drawRectangle({
+              x: pdfX,
+              y: pdfY,
+              width: pdfW,
+              height: pdfH,
+              color: PDFLib.rgb(r / 255, g / 255, b / 255)
+            });
             continue;
           }
 

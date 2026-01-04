@@ -53,8 +53,8 @@ body {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
-  width: calc(100% + 60px);
-  margin-left: -18px;
+  width: 103%;
+  margin-left: 0;
   padding: 16px 20px;
   background: var(--panel);
   box-shadow: var(--shadow);
@@ -69,10 +69,10 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 12px;
   width: 100%;
-  padding: 0 40px;
+  padding: 0 clamp(12px, 4vw, 40px);
 }
 
 .logo {
@@ -89,6 +89,7 @@ body {
   align-items: center;
   flex: 1;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
@@ -100,7 +101,7 @@ body {
 
 .control-bar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   flex: 1;
@@ -188,6 +189,7 @@ button:not(.delete-btn):disabled {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px 10px;
+  flex: 1 1 180px;
 }
 
 .control-bar input[type="text"],
@@ -197,16 +199,17 @@ button:not(.delete-btn):disabled {
   border: none;
   color: var(--text);
   font-weight: 600;
-  min-width: 180px;
+  min-width: 0;
+  width: clamp(120px, 18vw, 200px);
   outline: none;
 }
 
 .control-bar input[type="number"] {
-  width: 80px;
+  width: clamp(70px, 10vw, 90px);
 }
 
 .control-bar select {
-  width: 140px;
+  width: clamp(120px, 16vw, 160px);
   appearance: none;
 }
 
@@ -308,6 +311,12 @@ button:not(.delete-btn):disabled {
   padding: 0;
   background: transparent;
   border-radius: 0;
+}
+
+.mark.block-mark {
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 4px;
 }
 
 .mark.signature-mark img {

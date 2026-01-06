@@ -7,7 +7,7 @@
   <link rel="icon" type="image/x-icon" href="pedefeul_logo.png">
   <title>Editor pdf gratis - pedefeul.ro</title>
   <!-- Manually bump css version before each commit/deploy -->
-  <link rel="stylesheet" href="style.css?v=1.5.0">
+  <link rel="stylesheet" href="style.css?v=1.5.1">
   <!-- pdf.js (viewer/renderer) -->
   <script src="https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.min.js?module"></script>
   <!-- pdf-lib (writer) -->
@@ -15,11 +15,13 @@
 </head>
 
 <body>
-  <header class="app-header">
-    <div class="header-top">
+  <header class="app-header" id="header">
+    <div class="drawer-button">
+      <button id="drawer" type="button" aria-expanded="true" aria-controls="header-panel">^</button>
+    </div>
+    <div class="header-top" id="header-panel">
       <img src="pedefeul_logo2.png" alt="Pedefeul logo" class="logo">
       <div class="titles">
-        <div id="eyebrow"> PEDEFEUL.ro</div>
         <div class="control-bar">
           <label>Text: <input id="text" type="text" placeholder="..."></label>
           <label>Mărime: <input id="size" type="number" value="14" min="6" max="72"></label>
@@ -39,7 +41,6 @@
         </div>
       </div>
     </div>
-
   </header>
 
   <main class="app-body">
@@ -88,6 +89,7 @@
     let selectedMark = null;           // { el, data, pageIndex }
     let markIdCounter = 0;
     let pendingPlacement = null;       // { type, ... }
+    const appHeader = document.getElementById('header');
     const fileInput = document.getElementById('file');
     const textInput = document.getElementById('text');
     const sizeInput = document.getElementById('size');
@@ -100,6 +102,7 @@
     const uploadSection = document.querySelector('.upload-section');
     const resetBtn = document.getElementById('reset');
     const correctBtn = document.getElementById('correct');
+    const drawerBtn = document.getElementById('drawer');
     const signatureModal = document.getElementById('signature-modal');
     const signatureCanvas = document.getElementById('signature-canvas');
     const signatureClearBtn = document.getElementById('signature-clear');
@@ -124,8 +127,30 @@
       }
     };
 
+    const textFilterRegex = (() => {
+      try {
+        return /[\p{L}\p{N}\p{P}\p{Zs}]/gu;
+      } catch (err) {
+        return /[A-Za-z0-9 .,!?:;'"()[\]{}<>@#$%^&*_+=\-\\/|~`]/g;
+      }
+    })();
+
+    function sanitizeTextValue(value) {
+      if (typeof value !== 'string' || !value) return '';
+      const matches = value.match(textFilterRegex);
+      return matches ? matches.join('') : '';
+    }
+
+    function applySanitizedTextInput() {
+      const sanitized = sanitizeTextValue(textInput.value);
+      if (sanitized !== textInput.value) {
+        textInput.value = sanitized;
+      }
+      return sanitized;
+    }
+
     function updatePlaceButtonState() {
-      const hasText = !!textInput.value.trim();
+      const hasText = !!sanitizeTextValue(textInput.value).trim();
       const hasPdf = !!originalBytes;
       placeBtn.disabled = !hasPdf || !hasText || !!pendingPlacement;
       updateSignatureButtonState();
@@ -293,7 +318,11 @@
         textSpan.removeEventListener('blur', onBlur);
         textSpan.removeEventListener('keydown', onKey);
         if (save) {
-          markData.text = textSpan.textContent;
+          const sanitized = sanitizeTextValue(textSpan.textContent);
+          if (sanitized !== textSpan.textContent) {
+            textSpan.textContent = sanitized;
+          }
+          markData.text = sanitized;
         } else {
           textSpan.textContent = previousText;
         }
@@ -727,9 +756,17 @@
       selectMark(m, markData, pageIndex);
     }
 
+    drawerBtn.addEventListener('click', () => {
+      const isCollapsed = appHeader.classList.toggle('is-collapsed');
+      drawerBtn.setAttribute('aria-expanded', (!isCollapsed).toString());
+    })
+
     placeBtn.addEventListener('click', () => {
-      const text = textInput.value.trim();
+      const text = sanitizeTextValue(textInput.value).trim();
       if (!text) return;
+      if (text !== textInput.value) {
+        textInput.value = text;
+      }
       const size = +sizeInput.value || 14;
       const font = fontSelect.value;
       const color = colorInput.value || '#000000';
@@ -743,7 +780,10 @@
       updatePlaceButtonState();
     });
 
-    textInput.addEventListener('input', updatePlaceButtonState);
+    textInput.addEventListener('input', () => {
+      applySanitizedTextInput();
+      updatePlaceButtonState();
+    });
     sizeInput.addEventListener('input', () => {
       if (!selectedMark) return;
       setSelectedMarkSize(sizeInput.value);
@@ -779,21 +819,9 @@
       const baseWidth = signatureCanvasSize.width || signatureCanvas.width || 520;
       const baseHeight = signatureCanvasSize.height || signatureCanvas.height || 200;
 
-      // Instead of fixed pixels, we define a target percentage width
-      // But we need the ASPECT RATIO of the signature
+      //Aspect ratio percentage
       const aspectRatio = baseWidth / baseHeight;
 
-      // We'll calculate the actual width/height percentages in placeMark
-      // Here we just pass the src and aspect info, OR we simulate a width.
-      // Actually, placeMark expects 'placement.width' to be a pixel value in the current logic.
-      // But we modified placeMark logic? No, placeMark takes `placement.width` and div by rect.width.
-
-      // Let's pass a "pseudo-pixel" width that forces the percentage calculation 
-      // in placeMark to result in exactly 25%?
-      // No, let's just use the current viewer width reference if possible. 
-      // But we aren't in a page context here.
-
-      // Better: Store aspect ratio in pendingPlacement
       pendingPlacement = {
         type: 'signature',
         src: signatureCanvas.toDataURL('image/png'),
@@ -925,7 +953,6 @@
         overlay.style.height = canvas.height + 'px';
         wrapper.appendChild(overlay);
 
-        // click to place text
         // click to place text
         const pageIndex = p - 1;
 
@@ -1069,7 +1096,9 @@
           const pdfY = pageSize.height - (m.y * pageSize.height) - textHeight;
 
           const { r, g, b } = hexToRgb(m.color || '#000000');
-          page.drawText(m.text, {
+          const safeText = sanitizeTextValue(m.text);
+          if (!safeText.trim()) continue;
+          page.drawText(safeText, {
             x: pdfX,
             y: pdfY,
             size: pdfSize,

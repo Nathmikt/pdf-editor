@@ -83,6 +83,29 @@ body {
   object-fit: contain;
 }
 
+.drawer-button {
+  display: none;
+}
+
+.drawer-button button {
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background-image: var(--gradient);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+  box-shadow: 0 18px 32px -22px rgba(66, 133, 244, 0.85);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.drawer-button button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 22px 38px -18px rgba(66, 133, 244, 0.95);
+}
+
 .titles {
   display: flex;
   flex-direction: row;
@@ -189,7 +212,6 @@ button:not(.delete-btn):disabled {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px 10px;
-  flex: 1 1 180px;
 }
 
 .control-bar input[type="text"],
@@ -429,16 +451,45 @@ button:not(.delete-btn):disabled {
     padding: 12px 16px;
     gap: 8px;
     border-radius: 0;
+    overflow: hidden;
+    transition: padding 200ms ease, gap 200ms ease;
   }
 
   .header-top {
     flex-direction: column;
     padding: 0;
     gap: 12px;
+    width: 100%;
+    max-height: 900px;
+    overflow: hidden;
+    transition: max-height 220ms ease, opacity 220ms ease, transform 220ms ease;
+    transform-origin: top;
   }
 
   .logo {
     display: none;
+  }
+
+  .drawer-button {
+    display: flex;
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .app-header.is-collapsed {
+    padding: 10px 16px;
+    gap: 0;
+  }
+
+  .app-header.is-collapsed .header-top {
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-12px);
+    pointer-events: none;
+  }
+
+  .app-header.is-collapsed .drawer-button button {
+    transform: rotate(180deg);
   }
 
   .titles {

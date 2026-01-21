@@ -168,34 +168,89 @@ button:not(.delete-btn) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 12px 20px;
-  border-radius: 22px;
-  background-image: var(--gradient);
-  color: #ffffff;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  padding: 6px 16px;
+  min-height: 36px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent-strong);
+  font-weight: 500;
   cursor: pointer;
-  border: none;
-  box-shadow: 0 18px 32px -20px rgba(66, 133, 244, 0.85);
-  transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+  border: 1px solid rgba(66, 133, 244, 0.5);
+  box-shadow: none;
+  text-transform: none;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.upload-button {
+  padding: 10px 22px;
+  min-height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 8px;
+  box-shadow: 0 10px 22px -18px rgba(66, 133, 244, 0.7);
+  animation: upload-pulse 2.6s ease-in-out infinite;
+  transition: transform 200ms ease, box-shadow 200ms ease, background 150ms ease,
+    border-color 150ms ease, color 150ms ease;
+}
+
+.upload-button:hover {
+  transform: translateY(-1px);
+}
+
+@keyframes upload-pulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 10px 22px -18px rgba(66, 133, 244, 0.7);
+  }
+
+  50% {
+    transform: translateY(-1px) scale(1.03);
+    box-shadow: 0 16px 28px -18px rgba(66, 133, 244, 0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-button {
+    animation: none;
+  }
 }
 
 .upload-button:hover,
 button:not(.delete-btn):not(:disabled):hover {
-  transform: translateY(-1px);
-  box-shadow: 0 22px 38px -18px rgba(66, 133, 244, 0.95);
+  background: rgba(66, 133, 244, 0.08);
+  border-color: var(--accent-strong);
 }
 
 .upload-button:active,
 button:not(.delete-btn):not(:disabled):active {
-  transform: translateY(0);
+  background: rgba(66, 133, 244, 0.16);
 }
 
 button:not(.delete-btn):disabled {
-  opacity: 0.5;
+  opacity: 1;
   cursor: not-allowed;
   box-shadow: none;
-  transform: none;
+  background: transparent;
+  color: rgba(0, 0, 0, 0.38);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+#reset:not(:disabled),
+#signature-clear:not(:disabled) {
+  color: #d32f2f;
+  border-color: rgba(211, 47, 47, 0.5);
+}
+
+#reset:not(:disabled):hover,
+#signature-clear:not(:disabled):hover {
+  background: rgba(211, 47, 47, 0.08);
+  border-color: #d32f2f;
+}
+
+#reset:not(:disabled):active,
+#signature-clear:not(:disabled):active {
+  background: rgba(211, 47, 47, 0.16);
 }
 
 #file {
@@ -203,27 +258,30 @@ button:not(.delete-btn):disabled {
 }
 
 .control-bar label {
-  color: var(--text);
+  color: var(--accent-strong);
   display: flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 8px 10px;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid rgba(66, 133, 244, 0.5);
+  border-radius: 4px;
+  padding: 6px 10px;
 }
 
 .control-bar input[type="text"],
 .control-bar input[type="number"],
 .control-bar select {
   background: transparent;
-  border: none;
+  border: 1px solid rgba(66, 133, 244, 0.35);
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   min-width: 0;
   width: clamp(120px, 18vw, 200px);
   outline: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .control-bar input[type="number"] {
@@ -233,6 +291,22 @@ button:not(.delete-btn):disabled {
 .control-bar select {
   width: clamp(120px, 16vw, 160px);
   appearance: none;
+}
+
+.control-bar label:focus-within {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.16);
+}
+
+.control-bar input[type="text"]:focus,
+.control-bar input[type="number"]:focus,
+.control-bar select:focus {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.16);
+}
+
+.control-bar input[type="text"]::placeholder {
+  color: var(--muted);
 }
 
 .control-bar button {
@@ -246,7 +320,7 @@ button:not(.delete-btn):disabled {
 }
 
 .control-bar button:not(:disabled):hover {
-  transform: translateY(-1px);
+  transform: none;
 }
 
 #pages {

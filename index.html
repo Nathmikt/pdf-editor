@@ -52,6 +52,11 @@
     </section>
 
     <div id="pages"></div>
+    <div id="page-actions" class="hidden">
+      <button id="add-doc-btn" type="button">+ Adaugă document</button>
+      <button id="add-blank-page-btn" type="button">+ Adaugă pagină goală</button>
+    </div>
+    <input id="append-file" type="file" accept="application/pdf" class="hidden">
   </main>
 
   <div id="signature-modal" class="modal hidden">
@@ -89,6 +94,7 @@
     let selectedMark = null;           // { el, data, pageIndex }
     let markIdCounter = 0;
     let pendingPlacement = null;       // { type, ... }
+    let selectedSignaturePosition = null;
     const appHeader = document.getElementById('header');
     const fileInput = document.getElementById('file');
     const textInput = document.getElementById('text');
@@ -101,6 +107,10 @@
     const saveBtn = document.getElementById('save');
     const uploadSection = document.querySelector('.upload-section');
     const resetBtn = document.getElementById('reset');
+    const pageActions = document.getElementById('page-actions');
+    const addDocBtn = document.getElementById('add-doc-btn');
+    const addBlankPageBtn = document.getElementById('add-blank-page-btn');
+    const appendFileInput = document.getElementById('append-file');
     const correctBtn = document.getElementById('correct');
     const drawerBtn = document.getElementById('drawer');
     const signatureModal = document.getElementById('signature-modal');
@@ -147,6 +157,24 @@
         textInput.value = sanitized;
       }
       return sanitized;
+    }
+
+    function colorizePng(base64Src, hexColor) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          ctx.globalCompositeOperation = 'source-in';
+          ctx.fillStyle = hexColor || '#000000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.src = base64Src;
+      });
     }
 
     function updatePlaceButtonState() {
@@ -255,15 +283,22 @@
       fontSelect.value = key;
     }
 
-    function setSelectedMarkColor(colorValue) {
-      if (!selectedMark || (selectedMark.data.type !== 'text' && selectedMark.data.type !== 'block')) return;
+    async function setSelectedMarkColor(colorValue) {
+      if (!selectedMark) return;
       const fallback = '#000000';
       const val = typeof colorValue === 'string' && colorValue.trim() ? colorValue : fallback;
       selectedMark.data.color = val;
       if (selectedMark.data.type === 'text') {
         selectedMark.el.style.color = val;
-      } else {
+      } else if (selectedMark.data.type === 'block') {
         selectedMark.el.style.backgroundColor = val;
+      } else if (selectedMark.data.type === 'signature') {
+        const colorized = await colorizePng(selectedMark.data.originalSrc, val);
+        selectedMark.data.src = colorized;
+        const img = selectedMark.el.querySelector('img');
+        if (img) {
+          img.src = colorized;
+        }
       }
       colorInput.value = val;
     }
@@ -280,6 +315,9 @@
       }
       if (markData.type === 'block') {
         colorInput.value = markData.color || '#ffffff';
+      }
+      if (markData.type === 'signature') {
+        colorInput.value = markData.color || '#000000';
       }
     }
 
@@ -615,12 +653,15 @@
           heightPct = placement.height / rect.height;
         }
 
+        const colorVal = colorInput.value || '#000000';
         const markData = {
           id: markIdCounter++,
           type: 'signature',
           x: xPct,
           y: yPct,
+          originalSrc: placement.src,
           src: placement.src,
+          color: colorVal,
           w: widthPct,
           h: heightPct
         };
@@ -641,6 +682,12 @@
         img.style.width = '100%';
         img.style.height = 'auto';
         m.appendChild(img);
+
+        // Colorize asynchronously to match currently selected color
+        colorizePng(placement.src, colorVal).then(colorized => {
+          markData.src = colorized;
+          img.src = colorized;
+        });
 
         const handle = document.createElement('div');
         handle.className = 'resize-handle';
@@ -798,14 +845,17 @@
     });
 
     signatureBtn.addEventListener('click', () => {
-      pendingPlacement = null;
-      openSignatureModal();
+      clearSelection();
+      pendingPlacement = { type: 'signature_position' };
       updatePlaceButtonState();
     });
 
     signatureCancelBtn.addEventListener('click', () => {
       closeSignatureModal();
       clearSignatureCanvas();
+      selectedSignaturePosition = null;
+      clearAllPreviews();
+      updatePlaceButtonState();
     });
 
     signatureClearBtn.addEventListener('click', () => {
@@ -822,7 +872,7 @@
       //Aspect ratio percentage
       const aspectRatio = baseWidth / baseHeight;
 
-      pendingPlacement = {
+      const placement = {
         type: 'signature',
         src: signatureCanvas.toDataURL('image/png'),
         isRelative: true, // Signal to use relative sizing
@@ -830,8 +880,20 @@
         aspectRatio: aspectRatio
       };
 
+      if (selectedSignaturePosition) {
+        placeMark(
+          selectedSignaturePosition.pageIndex,
+          selectedSignaturePosition.overlay,
+          selectedSignaturePosition.xPx,
+          selectedSignaturePosition.yPx,
+          placement
+        );
+        selectedSignaturePosition = null;
+      }
+
       closeSignatureModal();
       clearSelection();
+      clearSignatureCanvas();
       updatePlaceButtonState();
     });
 
@@ -876,9 +938,14 @@
     updateSignatureActionState();
     updatePlaceButtonState();
 
+    function clearAllPreviews() {
+      document.querySelectorAll('.placement-preview').forEach(el => el.remove());
+    }
+
     function enterEditMode() {
       uploadSection.classList.add('hidden');
       resetBtn.disabled = false;
+      pageActions.classList.remove('hidden');
     }
 
     function resetApp() {
@@ -890,6 +957,8 @@
       marks = [];
       markIdCounter = 0;
       pendingPlacement = null;
+      selectedSignaturePosition = null;
+      clearAllPreviews();
       textInput.value = '';
       sizeInput.value = '14';
       fontSelect.value = 'helvetica';
@@ -901,8 +970,10 @@
       updateSignatureActionState();
       updatePlaceButtonState();
       fileInput.value = '';
+      appendFileInput.value = '';
       uploadSection.classList.remove('hidden');
       resetBtn.disabled = true;
+      pageActions.classList.add('hidden');
     }
 
     // Render uploaded PDF
@@ -915,6 +986,7 @@
       // Reset state for new document
       clearSelection();
       pendingPlacement = null;
+      selectedSignaturePosition = null;
       markIdCounter = 0;
       saveBtn.disabled = true;
       updatePlaceButtonState();
@@ -965,6 +1037,15 @@
           const y = clientY - r.top;
 
           const placement = pendingPlacement;
+          if (placement.type === 'signature_position') {
+            selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
+            pendingPlacement = null;
+            clearAllPreviews();
+            updatePlaceButtonState();
+            openSignatureModal();
+            return;
+          }
+
           placeMark(pageIndex, overlay, x, y, placement);
           if (placement.type === 'text') {
             textInput.value = '';
@@ -992,6 +1073,45 @@
           handlePlacement(t.clientX, t.clientY);
         });
 
+        function updatePreview(e) {
+          if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
+            removePreview();
+            return;
+          }
+          if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
+            removePreview();
+            return;
+          }
+          let preview = overlay.querySelector('.placement-preview');
+          if (!preview) {
+            preview = document.createElement('div');
+            preview.className = 'placement-preview';
+            preview.innerHTML = '<span class="preview-label">Semnătură</span>';
+            overlay.appendChild(preview);
+          }
+          const rect = overlay.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          const w = rect.width * 0.25;
+          const h = w / 2.6;
+
+          preview.style.width = w + 'px';
+          preview.style.height = h + 'px';
+          preview.style.left = x + 'px';
+          preview.style.top = y + 'px';
+        }
+
+        function removePreview() {
+          const preview = overlay.querySelector('.placement-preview');
+          if (preview) {
+            preview.remove();
+          }
+        }
+
+        wrapper.addEventListener('mousemove', updatePreview);
+        wrapper.addEventListener('mouseleave', removePreview);
+
         pagesEl.appendChild(wrapper);
         docMeta.push({ scale, width: viewport.width, height: viewport.height, pdfWidth: page.view[2], pdfHeight: page.view[3] });
         marks.push([]);
@@ -1001,6 +1121,285 @@
     });
 
     resetBtn.addEventListener('click', resetApp);
+
+    addBlankPageBtn.addEventListener('click', async () => {
+      const refMeta = docMeta[0] || { scale: 1.25, width: 744, height: 1052, pdfWidth: 595.27, pdfHeight: 841.89 };
+      const scale = refMeta.scale || 1.25;
+
+      // Update originalU8 immediately using pdf-lib
+      const currentDoc = await PDFLib.PDFDocument.load(originalU8, { updateMetadata: false });
+      currentDoc.addPage([refMeta.pdfWidth, refMeta.pdfHeight]);
+      const bytes = await currentDoc.save({ useObjectStreams: false });
+      originalU8 = new Uint8Array(bytes);
+      originalBytes = originalU8.buffer;
+
+      // Append blank page UI element
+      const canvas = document.createElement('canvas');
+      canvas.width = refMeta.width;
+      canvas.height = refMeta.height;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      const wrapper = document.createElement('div');
+      wrapper.className = 'page';
+      wrapper.appendChild(canvas);
+
+      const overlay = document.createElement('div');
+      overlay.className = 'overlay';
+      overlay.style.width = canvas.width + 'px';
+      overlay.style.height = canvas.height + 'px';
+      wrapper.appendChild(overlay);
+
+      const pageIndex = docMeta.length;
+
+      function handlePlacement(clientX, clientY) {
+        if (!originalBytes) return;
+        if (!pendingPlacement) return;
+
+        const r = overlay.getBoundingClientRect();
+        const x = clientX - r.left;
+        const y = clientY - r.top;
+
+        const placement = pendingPlacement;
+        if (placement.type === 'signature_position') {
+          selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
+          pendingPlacement = null;
+          clearAllPreviews();
+          updatePlaceButtonState();
+          openSignatureModal();
+          return;
+        }
+
+        placeMark(pageIndex, overlay, x, y, placement);
+        if (placement.type === 'text') {
+          textInput.value = '';
+        }
+        pendingPlacement = null;
+        updatePlaceButtonState();
+      }
+
+      wrapper.addEventListener('click', (ev) => {
+        if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
+        handlePlacement(ev.clientX, ev.clientY);
+      });
+
+      wrapper.addEventListener('touchend', (ev) => {
+        if (!pendingPlacement) return;
+        if (ev.changedTouches.length !== 1) return;
+        const t = ev.changedTouches[0];
+
+        const target = document.elementFromPoint(t.clientX, t.clientY);
+        if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
+
+        ev.preventDefault();
+        handlePlacement(t.clientX, t.clientY);
+      });
+
+      function updatePreview(e) {
+        if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
+          removePreview();
+          return;
+        }
+        if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
+          removePreview();
+          return;
+        }
+        let preview = overlay.querySelector('.placement-preview');
+        if (!preview) {
+          preview = document.createElement('div');
+          preview.className = 'placement-preview';
+          preview.innerHTML = '<span class="preview-label">Semnătură</span>';
+          overlay.appendChild(preview);
+        }
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const w = rect.width * 0.25;
+        const h = w / 2.6;
+
+        preview.style.width = w + 'px';
+        preview.style.height = h + 'px';
+        preview.style.left = x + 'px';
+        preview.style.top = y + 'px';
+      }
+
+      function removePreview() {
+        const preview = overlay.querySelector('.placement-preview');
+        if (preview) {
+          preview.remove();
+        }
+      }
+
+      wrapper.addEventListener('mousemove', updatePreview);
+      wrapper.addEventListener('mouseleave', removePreview);
+
+      pagesEl.appendChild(wrapper);
+      
+      docMeta.push({
+        scale: scale,
+        width: refMeta.width,
+        height: refMeta.height,
+        pdfWidth: refMeta.pdfWidth,
+        pdfHeight: refMeta.pdfHeight
+      });
+      marks.push([]);
+      
+      saveBtn.disabled = false;
+      wrapper.scrollIntoView({ behavior: 'smooth' });
+    });
+
+    addDocBtn.addEventListener('click', () => {
+      appendFileInput.click();
+    });
+
+    appendFileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const buf = await file.arrayBuffer();
+      const appendU8 = new Uint8Array(buf);
+
+      // Load and merge PDF immediately using pdf-lib
+      const currentDoc = await PDFLib.PDFDocument.load(originalU8, { updateMetadata: false });
+      const appendDoc = await PDFLib.PDFDocument.load(appendU8);
+      const copiedPages = await currentDoc.copyPages(appendDoc, appendDoc.getPageIndices());
+      copiedPages.forEach((page) => currentDoc.addPage(page));
+      
+      const bytes = await currentDoc.save({ useObjectStreams: false });
+      originalU8 = new Uint8Array(bytes);
+      originalBytes = originalU8.buffer;
+
+      // Render new pages inside pagesEl using pdf.js
+      const renderU8 = appendU8.slice();
+      const pdf = await pdfjsLib.getDocument({ data: renderU8 }).promise;
+
+      // We track the index of the first newly added page to auto-scroll later
+      const firstNewPageIndex = docMeta.length;
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const scale = 1.25; // standard UI scale
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+
+        await page.render({ canvasContext: ctx, viewport }).promise;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'page';
+        wrapper.appendChild(canvas);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'overlay';
+        overlay.style.width = canvas.width + 'px';
+        overlay.style.height = canvas.height + 'px';
+        wrapper.appendChild(overlay);
+
+        const pageIndex = docMeta.length;
+
+        function handlePlacement(clientX, clientY) {
+          if (!originalBytes) return;
+          if (!pendingPlacement) return;
+
+          const r = overlay.getBoundingClientRect();
+          const x = clientX - r.left;
+          const y = clientY - r.top;
+
+          const placement = pendingPlacement;
+          if (placement.type === 'signature_position') {
+            selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
+            pendingPlacement = null;
+            clearAllPreviews();
+            updatePlaceButtonState();
+            openSignatureModal();
+            return;
+          }
+
+          placeMark(pageIndex, overlay, x, y, placement);
+          if (placement.type === 'text') {
+            textInput.value = '';
+          }
+          pendingPlacement = null;
+          updatePlaceButtonState();
+        }
+
+        wrapper.addEventListener('click', (ev) => {
+          if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
+          handlePlacement(ev.clientX, ev.clientY);
+        });
+
+        wrapper.addEventListener('touchend', (ev) => {
+          if (!pendingPlacement) return;
+          if (ev.changedTouches.length !== 1) return;
+          const t = ev.changedTouches[0];
+
+          const target = document.elementFromPoint(t.clientX, t.clientY);
+          if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
+
+          ev.preventDefault();
+          handlePlacement(t.clientX, t.clientY);
+        });
+
+        function updatePreview(e) {
+          if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
+            removePreview();
+            return;
+          }
+          if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
+            removePreview();
+            return;
+          }
+          let preview = overlay.querySelector('.placement-preview');
+          if (!preview) {
+            preview = document.createElement('div');
+            preview.className = 'placement-preview';
+            preview.innerHTML = '<span class="preview-label">Semnătură</span>';
+            overlay.appendChild(preview);
+          }
+          const rect = overlay.getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          const w = rect.width * 0.25;
+          const h = w / 2.6;
+
+          preview.style.width = w + 'px';
+          preview.style.height = h + 'px';
+          preview.style.left = x + 'px';
+          preview.style.top = y + 'px';
+        }
+
+        function removePreview() {
+          const preview = overlay.querySelector('.placement-preview');
+          if (preview) {
+            preview.remove();
+          }
+        }
+
+        wrapper.addEventListener('mousemove', updatePreview);
+        wrapper.addEventListener('mouseleave', removePreview);
+
+        pagesEl.appendChild(wrapper);
+        docMeta.push({ scale, width: viewport.width, height: viewport.height, pdfWidth: page.view[2], pdfHeight: page.view[3] });
+        marks.push([]);
+      }
+
+      // Reset value to allow appending the same file again
+      appendFileInput.value = '';
+
+      // Enable save button
+      saveBtn.disabled = false;
+
+      // Scroll smoothly to the first newly added page of appended document
+      const firstNewWrapper = pagesEl.children[firstNewPageIndex];
+      if (firstNewWrapper) {
+        firstNewWrapper.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
 
     // Save: write overlays into the PDF using pdf-lib
     saveBtn.addEventListener('click', async () => {

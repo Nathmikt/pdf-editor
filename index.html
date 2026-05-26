@@ -36,8 +36,9 @@
           <button id="place" disabled>Plasează</button>
           <button id="correct" disabled>Corectură</button>
           <button id="signature" disabled>Semnătură</button>
+          <button id="image-btn" disabled>Imagine</button>
           <button id="save" disabled>Salvează</button>
-          <button id="reset" disabled>Resetează</button>
+          <input id="image-file" type="file" accept="image/png, image/jpeg" class="hidden">
         </div>
       </div>
     </div>
@@ -103,6 +104,8 @@
     const fontSelect = document.getElementById('font');
     const placeBtn = document.getElementById('place');
     const signatureBtn = document.getElementById('signature');
+    const imageBtn = document.getElementById('image-btn');
+    const imageFileInput = document.getElementById('image-file');
     const pagesEl = document.getElementById('pages');
     const saveBtn = document.getElementById('save');
     const uploadSection = document.querySelector('.upload-section');
@@ -183,6 +186,7 @@
       placeBtn.disabled = !hasPdf || !hasText || !!pendingPlacement;
       updateSignatureButtonState();
       updateCorrectButtonState();
+      updateImageButtonState();
     }
 
     function updateSignatureButtonState() {
@@ -191,6 +195,10 @@
 
     function updateCorrectButtonState() {
       correctBtn.disabled = !originalBytes || !!pendingPlacement;
+    }
+
+    function updateImageButtonState() {
+      imageBtn.disabled = !originalBytes || !!pendingPlacement;
     }
 
     function updateSignatureActionState() {
@@ -640,13 +648,15 @@
       const xPct = xPx / rect.width;
       const yPct = yPx / rect.height;
 
-      if (placement.type === 'signature') {
+      if (placement.type === 'signature' || placement.type === 'image') {
         let widthPct, heightPct;
+        const isSig = placement.type === 'signature';
 
         if (placement.isRelative) {
           // New logic: simpler, consistent size
           widthPct = placement.targetPct || 0.25;
-          heightPct = widthPct / placement.aspectRatio;
+          const pageWidthHeightRatio = rect.width / rect.height;
+          heightPct = (widthPct / placement.aspectRatio) * pageWidthHeightRatio;
         } else {
           // Fallback or legacy logic
           widthPct = placement.width / rect.width;
@@ -656,7 +666,7 @@
         const colorVal = colorInput.value || '#000000';
         const markData = {
           id: markIdCounter++,
-          type: 'signature',
+          type: placement.type,
           x: xPct,
           y: yPct,
           originalSrc: placement.src,
@@ -668,7 +678,7 @@
         marks[pageIndex].push(markData);
 
         const m = document.createElement('div');
-        m.className = 'mark signature-mark';
+        m.className = `mark ${isSig ? 'signature-mark' : 'image-mark'}`;
         m.style.left = (xPct * 100) + '%';
         m.style.top = (yPct * 100) + '%';
         m.style.width = (widthPct * 100) + '%';
@@ -678,16 +688,18 @@
 
         const img = document.createElement('img');
         img.src = placement.src;
-        img.alt = 'Semnătură';
+        img.alt = isSig ? 'Semnătură' : 'Imagine';
         img.style.width = '100%';
         img.style.height = 'auto';
         m.appendChild(img);
 
-        // Colorize asynchronously to match currently selected color
-        colorizePng(placement.src, colorVal).then(colorized => {
-          markData.src = colorized;
-          img.src = colorized;
-        });
+        // Colorize signatures asynchronously
+        if (isSig) {
+          colorizePng(placement.src, colorVal).then(colorized => {
+            markData.src = colorized;
+            img.src = colorized;
+          });
+        }
 
         const handle = document.createElement('div');
         handle.className = 'resize-handle';
@@ -942,6 +954,106 @@
       document.querySelectorAll('.placement-preview').forEach(el => el.remove());
     }
 
+    function setupPageEvents(wrapper, overlay, pageIndex) {
+      function handlePlacement(clientX, clientY) {
+        if (!originalBytes) return;
+        if (!pendingPlacement) return;
+
+        const r = overlay.getBoundingClientRect();
+        const x = clientX - r.left;
+        const y = clientY - r.top;
+
+        const placement = pendingPlacement;
+        if (placement.type === 'signature_position') {
+          selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
+          pendingPlacement = null;
+          clearAllPreviews();
+          updatePlaceButtonState();
+          openSignatureModal();
+          return;
+        }
+
+        if (placement.type === 'image_position') {
+          placeMark(pageIndex, overlay, x, y, {
+            type: 'image',
+            src: placement.src,
+            isRelative: true,
+            targetPct: 0.25,
+            aspectRatio: placement.aspectRatio
+          });
+          pendingPlacement = null;
+          clearAllPreviews();
+          updatePlaceButtonState();
+          return;
+        }
+
+        placeMark(pageIndex, overlay, x, y, placement);
+        if (placement.type === 'text') {
+          textInput.value = '';
+        }
+        pendingPlacement = null;
+        updatePlaceButtonState();
+      }
+
+      wrapper.addEventListener('click', (ev) => {
+        if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
+        handlePlacement(ev.clientX, ev.clientY);
+      });
+
+      wrapper.addEventListener('touchend', (ev) => {
+        if (!pendingPlacement) return;
+        if (ev.changedTouches.length !== 1) return;
+        const t = ev.changedTouches[0];
+
+        const target = document.elementFromPoint(t.clientX, t.clientY);
+        if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
+
+        ev.preventDefault();
+        handlePlacement(t.clientX, t.clientY);
+      });
+
+      function updatePreview(e) {
+        if (!pendingPlacement || (pendingPlacement.type !== 'signature_position' && pendingPlacement.type !== 'image_position')) {
+          removePreview();
+          return;
+        }
+        if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
+          removePreview();
+          return;
+        }
+        let preview = overlay.querySelector('.placement-preview');
+        if (!preview) {
+          preview = document.createElement('div');
+          preview.className = 'placement-preview';
+          const label = pendingPlacement.type === 'image_position' ? 'Imagine' : 'Semnătură';
+          preview.innerHTML = `<span class="preview-label">${label}</span>`;
+          overlay.appendChild(preview);
+        }
+        const rect = overlay.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        const aspectRatio = pendingPlacement.aspectRatio || 2.6;
+        const w = rect.width * 0.25;
+        const h = w / aspectRatio;
+
+        preview.style.width = w + 'px';
+        preview.style.height = h + 'px';
+        preview.style.left = x + 'px';
+        preview.style.top = y + 'px';
+      }
+
+      function removePreview() {
+        const preview = overlay.querySelector('.placement-preview');
+        if (preview) {
+          preview.remove();
+        }
+      }
+
+      wrapper.addEventListener('mousemove', updatePreview);
+      wrapper.addEventListener('mouseleave', removePreview);
+    }
+
     function enterEditMode() {
       uploadSection.classList.add('hidden');
       resetBtn.disabled = false;
@@ -971,8 +1083,10 @@
       updatePlaceButtonState();
       fileInput.value = '';
       appendFileInput.value = '';
+      imageFileInput.value = '';
       uploadSection.classList.remove('hidden');
       resetBtn.disabled = true;
+      imageBtn.disabled = true;
       pageActions.classList.add('hidden');
     }
 
@@ -1028,89 +1142,7 @@
         // click to place text
         const pageIndex = p - 1;
 
-        function handlePlacement(clientX, clientY) {
-          if (!originalBytes) return;
-          if (!pendingPlacement) return;
-
-          const r = overlay.getBoundingClientRect();
-          const x = clientX - r.left;
-          const y = clientY - r.top;
-
-          const placement = pendingPlacement;
-          if (placement.type === 'signature_position') {
-            selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
-            pendingPlacement = null;
-            clearAllPreviews();
-            updatePlaceButtonState();
-            openSignatureModal();
-            return;
-          }
-
-          placeMark(pageIndex, overlay, x, y, placement);
-          if (placement.type === 'text') {
-            textInput.value = '';
-          }
-          pendingPlacement = null;
-          updatePlaceButtonState();
-        }
-
-        wrapper.addEventListener('click', (ev) => {
-          if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
-          handlePlacement(ev.clientX, ev.clientY);
-        });
-
-        // Add touchend for placing on mobile
-        wrapper.addEventListener('touchend', (ev) => {
-          if (!pendingPlacement) return;
-          if (ev.changedTouches.length !== 1) return;
-          const t = ev.changedTouches[0];
-
-          // Avoid hitting a mark
-          const target = document.elementFromPoint(t.clientX, t.clientY);
-          if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
-
-          ev.preventDefault();
-          handlePlacement(t.clientX, t.clientY);
-        });
-
-        function updatePreview(e) {
-          if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
-            removePreview();
-            return;
-          }
-          if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
-            removePreview();
-            return;
-          }
-          let preview = overlay.querySelector('.placement-preview');
-          if (!preview) {
-            preview = document.createElement('div');
-            preview.className = 'placement-preview';
-            preview.innerHTML = '<span class="preview-label">Semnătură</span>';
-            overlay.appendChild(preview);
-          }
-          const rect = overlay.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-
-          const w = rect.width * 0.25;
-          const h = w / 2.6;
-
-          preview.style.width = w + 'px';
-          preview.style.height = h + 'px';
-          preview.style.left = x + 'px';
-          preview.style.top = y + 'px';
-        }
-
-        function removePreview() {
-          const preview = overlay.querySelector('.placement-preview');
-          if (preview) {
-            preview.remove();
-          }
-        }
-
-        wrapper.addEventListener('mousemove', updatePreview);
-        wrapper.addEventListener('mouseleave', removePreview);
+        setupPageEvents(wrapper, overlay, pageIndex);
 
         pagesEl.appendChild(wrapper);
         docMeta.push({ scale, width: viewport.width, height: viewport.height, pdfWidth: page.view[2], pdfHeight: page.view[3] });
@@ -1121,6 +1153,33 @@
     });
 
     resetBtn.addEventListener('click', resetApp);
+
+    imageBtn.addEventListener('click', () => {
+      clearSelection();
+      imageFileInput.click();
+    });
+
+    imageFileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64Data = event.target.result;
+        const img = new Image();
+        img.onload = () => {
+          const aspectRatio = img.width / img.height;
+          pendingPlacement = {
+            type: 'image_position',
+            src: base64Data,
+            aspectRatio: aspectRatio
+          };
+          updatePlaceButtonState();
+        };
+        img.src = base64Data;
+      };
+      reader.readAsDataURL(file);
+    });
 
     addBlankPageBtn.addEventListener('click', async () => {
       const refMeta = docMeta[0] || { scale: 1.25, width: 744, height: 1052, pdfWidth: 595.27, pdfHeight: 841.89 };
@@ -1153,87 +1212,7 @@
 
       const pageIndex = docMeta.length;
 
-      function handlePlacement(clientX, clientY) {
-        if (!originalBytes) return;
-        if (!pendingPlacement) return;
-
-        const r = overlay.getBoundingClientRect();
-        const x = clientX - r.left;
-        const y = clientY - r.top;
-
-        const placement = pendingPlacement;
-        if (placement.type === 'signature_position') {
-          selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
-          pendingPlacement = null;
-          clearAllPreviews();
-          updatePlaceButtonState();
-          openSignatureModal();
-          return;
-        }
-
-        placeMark(pageIndex, overlay, x, y, placement);
-        if (placement.type === 'text') {
-          textInput.value = '';
-        }
-        pendingPlacement = null;
-        updatePlaceButtonState();
-      }
-
-      wrapper.addEventListener('click', (ev) => {
-        if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
-        handlePlacement(ev.clientX, ev.clientY);
-      });
-
-      wrapper.addEventListener('touchend', (ev) => {
-        if (!pendingPlacement) return;
-        if (ev.changedTouches.length !== 1) return;
-        const t = ev.changedTouches[0];
-
-        const target = document.elementFromPoint(t.clientX, t.clientY);
-        if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
-
-        ev.preventDefault();
-        handlePlacement(t.clientX, t.clientY);
-      });
-
-      function updatePreview(e) {
-        if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
-          removePreview();
-          return;
-        }
-        if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
-          removePreview();
-          return;
-        }
-        let preview = overlay.querySelector('.placement-preview');
-        if (!preview) {
-          preview = document.createElement('div');
-          preview.className = 'placement-preview';
-          preview.innerHTML = '<span class="preview-label">Semnătură</span>';
-          overlay.appendChild(preview);
-        }
-        const rect = overlay.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        const w = rect.width * 0.25;
-        const h = w / 2.6;
-
-        preview.style.width = w + 'px';
-        preview.style.height = h + 'px';
-        preview.style.left = x + 'px';
-        preview.style.top = y + 'px';
-      }
-
-      function removePreview() {
-        const preview = overlay.querySelector('.placement-preview');
-        if (preview) {
-          preview.remove();
-        }
-      }
-
-      wrapper.addEventListener('mousemove', updatePreview);
-      wrapper.addEventListener('mouseleave', removePreview);
+      setupPageEvents(wrapper, overlay, pageIndex);
 
       pagesEl.appendChild(wrapper);
       
@@ -1301,87 +1280,7 @@
 
         const pageIndex = docMeta.length;
 
-        function handlePlacement(clientX, clientY) {
-          if (!originalBytes) return;
-          if (!pendingPlacement) return;
-
-          const r = overlay.getBoundingClientRect();
-          const x = clientX - r.left;
-          const y = clientY - r.top;
-
-          const placement = pendingPlacement;
-          if (placement.type === 'signature_position') {
-            selectedSignaturePosition = { pageIndex, overlay, xPx: x, yPx: y };
-            pendingPlacement = null;
-            clearAllPreviews();
-            updatePlaceButtonState();
-            openSignatureModal();
-            return;
-          }
-
-          placeMark(pageIndex, overlay, x, y, placement);
-          if (placement.type === 'text') {
-            textInput.value = '';
-          }
-          pendingPlacement = null;
-          updatePlaceButtonState();
-        }
-
-        wrapper.addEventListener('click', (ev) => {
-          if (ev.target.classList.contains('mark') || ev.target.closest('.mark')) return;
-          handlePlacement(ev.clientX, ev.clientY);
-        });
-
-        wrapper.addEventListener('touchend', (ev) => {
-          if (!pendingPlacement) return;
-          if (ev.changedTouches.length !== 1) return;
-          const t = ev.changedTouches[0];
-
-          const target = document.elementFromPoint(t.clientX, t.clientY);
-          if (target && (target.classList.contains('mark') || target.closest('.mark'))) return;
-
-          ev.preventDefault();
-          handlePlacement(t.clientX, t.clientY);
-        });
-
-        function updatePreview(e) {
-          if (!pendingPlacement || pendingPlacement.type !== 'signature_position') {
-            removePreview();
-            return;
-          }
-          if (e.target.classList.contains('mark') || e.target.closest('.mark')) {
-            removePreview();
-            return;
-          }
-          let preview = overlay.querySelector('.placement-preview');
-          if (!preview) {
-            preview = document.createElement('div');
-            preview.className = 'placement-preview';
-            preview.innerHTML = '<span class="preview-label">Semnătură</span>';
-            overlay.appendChild(preview);
-          }
-          const rect = overlay.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          const y = e.clientY - rect.top;
-
-          const w = rect.width * 0.25;
-          const h = w / 2.6;
-
-          preview.style.width = w + 'px';
-          preview.style.height = h + 'px';
-          preview.style.left = x + 'px';
-          preview.style.top = y + 'px';
-        }
-
-        function removePreview() {
-          const preview = overlay.querySelector('.placement-preview');
-          if (preview) {
-            preview.remove();
-          }
-        }
-
-        wrapper.addEventListener('mousemove', updatePreview);
-        wrapper.addEventListener('mouseleave', removePreview);
+        setupPageEvents(wrapper, overlay, pageIndex);
 
         pagesEl.appendChild(wrapper);
         docMeta.push({ scale, width: viewport.width, height: viewport.height, pdfWidth: page.view[2], pdfHeight: page.view[3] });
@@ -1439,7 +1338,8 @@
 
       async function getEmbeddedImage(src) {
         if (imageCache[src]) return imageCache[src];
-        const img = await pdfDoc.embedPng(src);
+        const isJpg = src.startsWith('data:image/jpeg') || src.startsWith('data:image/jpg');
+        const img = isJpg ? await pdfDoc.embedJpg(src) : await pdfDoc.embedPng(src);
         imageCache[src] = img;
         return img;
       }
@@ -1452,7 +1352,7 @@
         // Convert screen (canvas) coords to PDF user space:
         // mark.x is 0..1 percentage
         for (const m of marks[i]) {
-          if (m.type === 'signature') {
+          if (m.type === 'signature' || m.type === 'image') {
             const img = await getEmbeddedImage(m.src);
             // w is percentage of width
             const pdfW = m.w * pageSize.width;
@@ -1515,6 +1415,7 @@
       a.click();
     });
   </script>
+  <button id="reset" disabled>Resetează</button>
 </body>
 
 </html>

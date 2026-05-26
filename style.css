@@ -403,7 +403,8 @@ button:not(.delete-btn):disabled {
   pointer-events: auto;
 }
 
-.mark.signature-mark {
+.mark.signature-mark,
+.mark.image-mark {
   padding: 0;
   background: transparent;
   border-radius: 0;
@@ -415,7 +416,8 @@ button:not(.delete-btn):disabled {
   border-radius: 4px;
 }
 
-.mark.signature-mark img {
+.mark.signature-mark img,
+.mark.image-mark img {
   display: block;
   max-width: 280px;
   height: auto;
@@ -578,6 +580,39 @@ button:not(.delete-btn):disabled {
 #add-doc-btn:active,
 #add-blank-page-btn:active {
   transform: translateY(0);
+}
+
+#reset {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  padding: 10px 20px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #d32f2f;
+  border: 1px solid rgba(211, 47, 47, 0.5);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  transition: all 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#reset:hover:not(:disabled) {
+  background: rgba(211, 47, 47, 0.08);
+  border-color: #d32f2f;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(211, 47, 47, 0.25);
+}
+
+#reset:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+#reset:disabled {
+  display: none !important;
 }
 
 @media (max-width: 768px) {
